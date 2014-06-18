@@ -1,0 +1,724 @@
+#!/usr/bin/env php
+<?php
+#
+# NAME
+# redisJobRunnerService -- Continuously process a MediaWiki jobqueue
+#
+# DESCRIPTION
+# redisJobRunnerService is an infinite "while loop" used to call MediaWiki runJobs.php
+# and eventually attempt to process any job enqueued. A number of virtual sub-loops with
+# their own runners and job types must be defined via parameters. These loops can set any
+# of the job types as either low or high priorty. High priority will get ~80% of the time
+# share of the sub-loop under "busy" conditions. If there are few high priority jobs, the
+# loops will spend much more of their time on the low priority ones.
+#
+# This script is normally ran from the $IP directory of MediaWiki.
+# The --wrapper parameter is used to run some wrapper with a given command
+# by passing runJobs.php and the rest of the parameters as arguments to it.
+# For example, the value "php MWScript.php" could be used.
+#
+# You will probably want to run this script under your webserver username.
+#
+# Example:
+# // Process jobs of type "webVideoTranscode" with a maxtime of 4 hours with 5 runners
+# redisJobRunnerService --aggrSrvs <h:p> --queueSrvs <h:p> --timeout 14400 --runners 5:webVideoTranscode
+#
+# // Process jobs of type "AssembleUploadChunks"/"PublishedStashedFile" with 2 runners
+# redisJobRunnerService --aggrSrvs <h:p> --queueSrvs <h:p> --runners "5:AssembleUploadChunks,PublishedStashedFile'
+#
+# // Process jobs of type "A"/"B" with 2 runners and "C"/"D" with 2 runners
+# redisJobRunnerService --aggrSrvs <h:p> --queueSrvs <h:p> --runners "5:A,B|3:C,D"
+#
+# // Process jobs of all runners except refreshLinks/null and deprioritize renameUser
+# redisJobRunnerService --aggrSrvs <h:p> --queueSrvs <h:p> --runners "5:*,-refreshLinks,-null,~renameUser"
+#
+if ( PHP_SAPI !== 'cli' ) {
+	die( "This is not a valid entry point.\n" );
+}
+
+error_reporting( E_ALL );
+
+// Run the server...
+set_time_limit( 0 );
+ini_set( 'memory_limit', '256M' );
+RedisJobRunnerService::init(
+	getopt( '', array(
+		'aggrSrvs:', 'queueSrvs:', 'runners:',
+		'timeout::', 'config-file::', 'wrapper::', 'claimTTL::', 'attempts::'
+	) )
+)->main();
+
+class RedisJobRunnerService {
+	/**
+	 * How long can low priority jobs be run until some high priority
+	 * jobs should be checked for and run if they exist.
+	 * @var integer
+	 */
+	protected $hpMaxDelay = 120;
+	/**
+	 * The maxtime parameter for runJobs.php for low priority jobs.
+	 * The lower this value is, the less jobs of one wiki can hog attention
+	 * from the jobs on other wikis, though more overhead is incurred.
+	 * This should be lower than hpmaxdelay.
+	 * @var integer
+	 */
+	protected $lpMaxTime = 60;
+	/**
+	 * How long can high priority jobs be run until some low priority
+	 * jobs should be checked for and run if they exist.
+	 * @var integer
+	 */
+	protected $lpMaxDelay = 600;
+	/**
+	 * The maxtime parameter for runJobs.php for high priority jobs.
+	 * The lower this value is, the less jobs of one wiki/type can hog attention
+	 * from jobs of another wiki/type, though more overhead is incurred.
+	 * This should be lower than lpmaxdelay.
+	 * @var integer
+	 */
+	protected $hpMaxTime = 30;
+	/**
+	 * Default total memory limit for each runJobs.php process
+	 * @var string
+	 */
+	protected $maxProcMem = '300M';
+	/**
+	 * Max time before killing a PHP runner via timeout.
+	 * This should be much higher than hpmaxtime and lpmaxtime.
+	 * @var integer
+	 */
+	protected $maxProcReal = 3600;
+
+	/** @var Array List of IP:<port> entries */
+	protected $queueSrvs = array();
+	/** @var Array List of IP:<port> entries */
+	protected $aggrSrvs = array();
+	/** @var string Redis password */
+	protected $password;
+
+	/** @var string MediaWiki script wrapper */
+	protected $wrapper;
+	/** @var Map of (id => (job type list,count) */
+	protected $loopMap = array();
+	/** @var Map of (id => integer seconds) */
+	protected $claimTTLMap = array();
+	/** @var Map of (id => integer) */
+	protected $attemptsMap = array();
+
+	/** @var Map of (server => Redis object) */
+	protected $conns = array();
+	/** @var Map of (server => timestamp) */
+	protected $downSrvs = array();
+
+	/** @var RedisJobRunnerService */
+	protected static $instance;
+
+	/**
+	 * @param array $config
+	 * @return RedisJobRunnerService
+	 * @throws Exception
+	 */
+	public static function init( array $config ) {
+		if ( self::$instance ) {
+			throw new Exception( 'RedisJobRunnerService already initialized.' );
+		}
+
+		if ( isset( $config['config-file'] ) ) {
+			$iniConfig = parse_ini_file( $config['config-file'] );
+			if ( is_array( $iniConfig ) ) {
+				$config += $iniConfig; // params take precedence
+			} else {
+				throw new Exception( "Could not parse file at '{$config['config-file']}'." );
+			}
+		}
+
+		foreach ( array( 'aggrSrvs', 'queueSrvs', 'runners' ) as $par ) {
+			if ( !isset( $config[$par] ) ) {
+				die( "Usage: php RedisJobRunnerService.php\n" .
+					"--config-file=<path>\n" .
+					"--aggrSrvs=<address>[,address]...\n" .
+					"--queueSrvs=<address>[,address]...>\n" .
+					"--runners=<count>:<type>[,type]...[|<count>:<type>[,type]...]...\n" .
+					"--timeout=<seconds>\n" .
+					"--memory=<integer>M\n" .
+					"--wrapper=<script wrapper>" .
+					"--claimTTL=<type>:<seconds>[,<type>:<seconds>]...\n" .
+					"--attempts=<type>:<integer>[,<type>:<integer>]...\n"
+				);
+			}
+		}
+
+		self::$instance = new self( $config );
+		return self::$instance;
+	}
+
+	/**
+	 * @param array $config
+	 */
+	protected function __construct( array $config ) {
+		$this->aggrSrvs = explode( ',', $config['aggrSrvs'] );
+		if ( !count( $this->aggrSrvs ) ) {
+			throw new Exception( "Empty list for 'aggrSrvs'." );
+		}
+		$this->queueSrvs = explode( ',', $config['queueSrvs'] );
+		if ( !count( $this->queueSrvs ) ) {
+			throw new Exception( "Empty list for 'queueSrvs'." );
+		}
+
+		foreach ( explode( '|', $config['runners'] ) as $loop ) {
+			list( $runners, $types ) = explode( ':', $loop );
+			if ( !ctype_digit( $runners ) || $runners < 1 ) {
+				throw new Exception( "Invalid number of job runners '$runners'." );
+			}
+			$types = explode( ',', $types );
+			foreach ( $types as $type ) {
+				if ( !preg_match( '/^[-~]?[a-zA-Z0-9]+|\*$/', $type ) ) {
+					throw new Exception( "Invalid job type '$type'." );
+				}
+			}
+			$this->loopMap[] = array( 'types' => $types, 'runners' => $runners );
+		}
+
+		if ( isset( $config['timeout'] ) ) {
+			$this->maxProcReal = (int)$config['timeout'];
+		}
+		if ( isset( $config['memory'] ) ) {
+			$this->maxProcMem = $config['memory'];
+		}
+		if ( isset( $config['wrapper'] ) ) {
+			$this->wrapper = $config['wrapper'];
+		}
+		if ( isset( $config['password'] ) ) {
+			$this->password = $config['password'];
+		}
+		if ( isset( $config['claimTTL'] ) ) {
+			$tuples = explode( ',', $loop );
+			foreach ( $tuples as $tuple ) {
+				list( $type, $value ) = explode( ':', $tuple );
+				$this->claimTTLMap[$type] = (int)$value;
+			}
+		}
+		if ( isset( $config['attempts'] ) ) {
+			$tuples = explode( ',', $loop );
+			foreach ( $tuples as $tuple ) {
+				list( $type, $value ) = explode( ':', $tuple );
+				$this->attemptsMap[$type] = (int)$value;
+			}
+		}
+	}
+
+	/**
+	 * Entry point method that starts the service in earnest and keeps running
+	 */
+	public function main() {
+		print "Starting jobs loops...\n";
+
+		$prioMap = array(); // map of (id => (current priority, since))
+		$procMap = array(); // map of (id => slot # => proc_open handle, descriptors)
+		foreach ( $this->loopMap as $id => $info ) {
+			for ( $i=0; $i < $info['runners']; ++$i ) {
+				$procMap[$id][$i] = array( 'hande' => false, 'pipes' => array() );
+				$prioMap[$id] = array( 'high' => true, 'since' => time() );
+			}
+			print "Initialized loop $id with {$info['runners']} runners.\n";
+		}
+
+		while ( true ) {
+			$free = 0;
+			$spawned = 0;
+			$found = false;
+			// Do periodic queue tasks on all queues every 5 minutes
+			$count = $this->executeReadyPeriodicTasks();
+			if ( is_int( $count ) ) {
+				print "Updated the state of $count jobs (recycle/undelay/abandon).\n";
+			}
+			// Get the list of ready queues
+			$pending = $this->getReadyQueueMap();
+			if ( !count( $pending ) ) {
+				print "No jobs available...\n\n";
+				sleep( 5 ); // no jobs
+				continue;
+			}
+			// Spawn new runners as slots become available
+			foreach ( $procMap as $id => &$procSlots ) {
+				print "Checking runner loop $id...\n";
+				// Implement high/low priority via time-sharing
+				if ( $prioMap[$id]['high']
+					&& ( time() - $prioMap[$id]['since'] ) > $this->lpMaxDelay
+				) {
+					$prioMap[$id]['high'] = false;
+					$prioMap[$id]['since'] = time();
+					print "Runner loop $id now in low priority.\n";
+				} elseif ( !$prioMap[$id]['high']
+					&& ( time() - $prioMap[$id]['since'] ) > $this->hpMaxDelay
+				) {
+					$prioMap[$id]['high'] = true;
+					$prioMap[$id]['since'] = time();
+					print "Runner loop $id now in high priority.\n";
+				}
+				// Get the free slots and replace them
+				foreach ( $procSlots as $slot => &$procSlot ) {
+					$proc =& $procSlot['handle'];
+					$pipes =& $procSlot['pipes'];
+					$status = $proc ? proc_get_status( $proc ) : false;
+					if ( $status && $status['running'] ) {
+						continue;
+					} elseif ( $status && $status['exitcode'] != 0 ) {
+						$error = stream_get_contents( $pipes[2] );
+						print "Runner loop $id process in slot $slot " .
+							"gave status '{$status['exitcode']}':\n\t$error.\n";
+					}
+					++$free;
+					$queue = $this->selectQueue( $id, $slot, $prioMap, $pending );
+					if ( !$queue ) {
+						break;
+					}
+					$found = true;
+					// Spawn a job runner for this loop ID
+					$highPrio = $prioMap[$id]['high'];
+					$this->trySpawnRunner( $id, $slot, $highPrio, $queue, $proc, $pipes );
+					++$spawned;
+				}
+				if ( !$free ) {
+					print "Runner loop $id is full.\n\n";
+				} else if ( !$found ) {
+					// Try the other priority set
+					if ( $prioMap[$id]['high'] ) {
+						$prioMap[$id]['high'] = false;
+						print "Runner loop $id now in low priority.\n";
+					} else {
+						$prioMap[$id]['high'] = true;
+						print "Runner loop $id now in high priority.\n";
+					}
+					$prioMap[$id]['since'] = time();
+					print "Runner loop $id has no jobs.\n\n";
+				} else {
+					print "Done.\n\n";
+				}
+			}
+			// Backoff if there is nothing to do
+			if ( !$free ) {
+				print "All runner loops full.\n\n";
+				usleep( 100000 );
+			} elseif ( !$spawned ) {
+				print "Runners have free slots, but there are no jobs.\n\n";
+				usleep( 1000000 );
+			}
+			print "Memory usage: " . memory_get_usage() . ".\n";
+		}
+	}
+
+	/**
+	 * @param integer $id
+	 * @param integer $slot
+	 * @param array $prioMap
+	 * @param array $pending
+	 * @return array|boolean
+	 */
+	protected function selectQueue( $id, $slot, array $prioMap, array $pending ) {
+		$include = array();
+		$exclude = array();
+		foreach ( $this->loopMap[$id]['types'] as $type ) {
+			// "*" means "all current queues"
+			if ( $type === '*' ) {
+				$include = array_merge( $include, array_keys( $pending ) );
+			// "-" as a prefix means "exclude this queue" from "*"
+			} elseif ( $type[0] === '-' ) {
+				$exclude[] = substr( $type, 1 );
+			// "~" as a prefix means "low priority"
+			} elseif ( $type[0] === '~' ) {
+				if ( $prioMap[$id]['high'] ) {
+					// In high priority mode, exclude this type
+					$exclude[] = substr( $type, 1 );
+				} else {
+					// In low priority mode, allow this type
+					$include[] = substr( $type, 1 );
+				}
+			} else {
+				$include[] = $type;
+			}
+		}
+		$candidateTypes = array_diff( $include, $exclude );
+
+		$candidates = array(); // list of (type, db)
+		// Flatten the tree of candidates into a flat list so that a random
+		// item can be selected, weighing each queue (type/db tuple) equally.
+		foreach ( $pending as $type => $dbs ) {
+			if ( in_array( $type, $candidateTypes ) ) {
+				foreach ( $dbs as $db ) {
+					$candidates[] = array( $type, $db );
+				}
+			}
+		}
+		if ( !count( $candidates ) ) {
+			return false; // no jobs for this type
+		}
+
+		return $candidates[mt_rand( 0, count( $candidates ) - 1 )];
+	}
+
+	/**
+	 * @param integer $id
+	 * @param integer $slot
+	 * @param bool $highPrio
+	 * @param array $queue
+	 * @param resource|bool $proc
+	 * @param array $pipes
+	 * @return bool
+	 */
+	protected function trySpawnRunner(
+		$id, $slot, $highPrio, array $queue, &$proc, array &$pipes
+	) {
+		if ( $proc ) {
+			print "Closing process in loop $id at slot $slot\n";
+			fclose( $pipes[1] );
+			fclose( $pipes[2] );
+			proc_close( $proc );
+		}
+
+		// Pick a random queue
+		list( $type, $db ) = $queue;
+		$encType = escapeshellarg( $type );
+		$encWiki = escapeshellarg( $db );
+		$encMaxTime = escapeshellarg( $highPrio ? $this->lpMaxTime : $this->hpMaxTime );
+		$encMaxMem = escapeshellarg( $this->maxProcMem );
+
+		// Apply any HET-deploy style wrapper
+		$script = $this->wrapper
+			? "{$this->wrapper} runJobs.php"
+			: "php maintenance/runJobs.php";
+
+		// Make sure the runner is launched with various time/memory limits.
+		// Nice the process so things like ssh and deployment scripts are fine.
+		$cmd = "$script --wiki=$encWiki --type=$encType " .
+			"--maxtime=$encMaxTime --memory-limit=$encMaxMem";
+		if ( substr( php_uname(), 0, 7 ) !== 'Windows' ) {
+			$cmd = "nice -n 19 timeout {$this->maxProcReal} $cmd";
+		}
+
+		$descriptors = array(
+			0 => array( "pipe", "r" ), // stdin (child)
+			1 => array( "pipe", "w" ), // stdout (child)
+			2 => array( "pipe", "w" ) // stderr (child)
+		);
+
+		print "Spawning runner in loop $id at slot $slot ($type, $db):\n\t$cmd.\n";
+
+		// Start the runner in the background
+		$proc = proc_open( $cmd, $descriptors, $pipes );
+		fclose( $pipes[0] );
+
+		if ( !$proc ) {
+			trigger_error( "Could not spawn process in loop $id: $cmd" );
+		}
+
+		return (bool)$proc;
+	}
+
+	/**
+	 * @return array
+	 */
+	protected function getReadyQueueMap() {
+		static $map = null; // cache
+		static $mapTimestamp = 0;
+
+		$pendingDBs = array();
+		if ( $map === null || $mapTimestamp < microtime( true ) - 0.5 ) {
+			$conn = false;
+			// Connect to the first working server on the list
+			foreach ( $this->aggrSrvs as $server ) {
+				$conn = $this->getRedisConn( $server );
+				if ( $conn ) {
+					break;
+				}
+			}
+			if ( $conn ) {
+				try {
+					// Match JobQueueAggregatorRedis.php
+					$map = $this->redisCmd( $conn, 'hGetAll', array( $this->getReadyQueueKey() ) );
+					if ( $map === false ) {
+						return $pendingDBs;
+					}
+
+					$wikiIds = array();
+					$pendingDBs = array(); // (type => list of wikis)
+					foreach ( $map as $key => $time ) {
+						list( $type, $wiki ) = $this->dencQueueName( $key );
+						$pendingDBs[$type][] = $wiki;
+						$wikiIds[] = $wiki;
+					}
+
+					// Keep the list of wiki IDs up-to-date
+					if ( count( $wikiIds ) ) {
+						$params = array_merge( array( $this->getWikiSetKey() ), $wikiIds );
+						$this->redisCmd( $conn, 'sAdd', $params );
+					}
+				} catch ( RedisException $e ) {
+					unset( $this->conns[$server] );
+				}
+			}
+		}
+
+		return $pendingDBs;
+	}
+
+	/**
+	 * Recycle or destroy any jobs that have been claimed for too long
+	 * and release any ready delayed jobs into the queue. Also abandon
+	 * and prune out jobs that failed too many times.
+	 *
+	 * @note: similar to JobQueueRedis.php periodic tasks method
+	 * @return int|bool Number of jobs recycled/deleted/undelayed/abandoned (false if not run)
+	 */
+	protected function executeReadyPeriodicTasks() {
+		$tasksRun = 0;
+
+		// Run no more than every 5 minutes
+		static $lastPeriodicTime = null;
+		$lastPeriodicTime = $lastPeriodicTime ?: time() - mt_rand( 0, 300 );
+		if ( ( time() - $lastPeriodicTime ) <= 300 ) {
+			return false;
+		}
+		$lastPeriodicTime = time();
+
+		$aConn = false;
+		// Connect to the first working server on the list
+		foreach ( $this->aggrSrvs as $aServer ) {
+			$aConn = $this->getRedisConn( $aServer );
+			if ( $aConn ) {
+				break;
+			}
+		}
+
+		if ( !$aConn ) {
+			return $tasksRun;
+		}
+
+		static $script =
+<<<LUA
+		local kClaimed, kAttempts, kUnclaimed, kData, kAbandoned, kDelayed = unpack(KEYS)
+		local rClaimCutoff, rPruneCutoff, rAttempts, rTime = unpack(ARGV)
+		local released,abandoned,pruned,undelayed = 0,0,0,0
+		-- Get all non-dead jobs that have an expired claim on them.
+		-- The score for each item is the last claim timestamp (UNIX).
+		local staleClaims = redis.call('zRangeByScore',kClaimed,0,rClaimCutoff)
+		for k,id in ipairs(staleClaims) do
+			local timestamp = redis.call('zScore',kClaimed,id)
+			local attempts = redis.call('hGet',kAttempts,id)
+			if attempts < rAttempts then
+				-- Claim expired and attempts left: re-enqueue the job
+				redis.call('lPush',kUnclaimed,id)
+				redis.call('hIncrBy',kAttempts,id,1)
+				released = released + 1
+			else
+				-- Claim expired and no attempts left: mark the job as dead
+				redis.call('zAdd',kAbandoned,timestamp,id)
+				abandoned = abandoned + 1
+			end
+			redis.call('zRem',kClaimed,id)
+		end
+		-- Get all of the dead jobs that have been marked as dead for too long.
+		-- The score for each item is the last claim timestamp (UNIX).
+		local deadClaims = redis.call('zRangeByScore',kAbandoned,0,rPruneCutoff)
+		for k,id in ipairs(deadClaims) do
+			-- Stale and out of attempts: remove any traces of the job
+			redis.call('zRem',kAbandoned,id)
+			redis.call('hDel',kAttempts,id)
+			redis.call('hDel',kData,id)
+			pruned = pruned + 1
+		end
+		-- Get the list of ready delayed jobs, sorted by readiness (UNIX timestamp)
+		local ids = redis.call('zRangeByScore',kDelayed,0,rTime)
+		-- Migrate the jobs from the "delayed" set to the "unclaimed" list
+		for k,id in ipairs(ids) do
+			redis.call('lPush',kUnclaimed,id)
+			redis.call('zRem',kDelayed,id)
+		end
+		undelayed = #ids
+		return {released,abandoned,pruned,undelayed}
+LUA;
+
+		try {
+			$types = $this->redisCmd( $aConn, 'hKeys', array( $this->getQueueTypesKey() ) );
+			$wikiIds = $this->redisCmd( $aConn, 'sMembers', array( $this->getWikiSetKey() ) );
+
+			shuffle( $types );
+			shuffle( $wikiIds );
+
+			$now = time();
+
+			$paramsByQueue = array();
+			foreach ( $types as $type ) {
+				$ttl = isset( $this->claimTTLMap[$type] ) ? $this->claimTTLMap[$type] : 3600;
+				$attempts = isset( $this->attemptsMap[$type] ) ? $this->attemptsMap[$type] : 3;
+				foreach ( $wikiIds as $wikiId ) {
+					$paramsByQueue[] = array(
+						'queue'  => array( $type, $wikiId ),
+						'params' => array(
+							"{$wikiId}:jobqueue:{$type}:z-claimed", # KEYS[1]
+							"{$wikiId}:jobqueue:{$type}:h-attempts", # KEYS[2]
+							"{$wikiId}:jobqueue:{$type}:l-unclaimed", # KEYS[3]
+							"{$wikiId}:jobqueue:{$type}:h-data", # KEYS[4]
+							"{$wikiId}:jobqueue:{$type}:z-abandoned", # KEYS[5]
+							"{$wikiId}:jobqueue:{$type}:z-delayed", # KEYS[6]
+							$now - $ttl, # ARGV[1]
+							$now - 7 * 86400, # ARGV[2]
+							$attempts, # ARGV[3]
+							$now # ARGV[4]
+						),
+						'keys'   => 6 # number of first argument(s) that are keys
+					);
+				}
+			}
+
+			// Run the script on all job queue partitions...
+			foreach ( $this->queueSrvs as $qServer ) {
+				$qConn = $this->getRedisConn( $qServer );
+				if ( !$qConn ) {
+					continue; // partition down
+				}
+
+				try {
+					$sha1 = $this->redisCmd( $qConn, 'script', array( 'load', $script ) );
+
+					$this->redisCmd( $qConn, 'multi', array( Redis::PIPELINE ) );
+					foreach ( $paramsByQueue as $params ) {
+						$this->redisCmd( $qConn, 'evalSha',
+							array( $sha1, $params['params'], $params['keys'] ) );
+					}
+					$res = $this->redisCmd( $qConn, 'exec' );
+
+					$now = time();
+					$mapSet = array(); // map of (queue name => timestamp)
+					foreach ( $res as $i => $result ) {
+						$tasksRun += array_sum( $result );
+						// @TODO: send udp stat calls for these state changes
+						list( $released, $abandoned, $pruned, $undelayed ) = $result;
+						if ( $released > 0 || $undelayed > 0 ) {
+							list( $qType, $qWiki ) = $paramsByQueue[$i]['queue'];
+							$mapSet[$this->encQueueName( $qType, $qWiki )] = $now;
+						}
+					}
+				} catch ( RedisException $e ) {
+					unset( $this->conns[$qServer] );
+				}
+
+				$this->redisCmd( $aConn, 'hMSet', array( $this->getReadyQueueKey(), $mapSet ) );
+			}
+		} catch ( RedisException $e ) {
+			unset( $this->conns[$aServer] );
+		}
+
+		return $tasksRun;
+	}
+
+	/**
+	 * @return string (per JobQueueAggregatorRedis.php)
+	 */
+	private function getReadyQueueKey() {
+		return "jobqueue:aggregator:h-ready-queues:v1"; // global
+	}
+
+	/**
+	 * @return string (per JobQueueAggregatorRedis.php)
+	 */
+	private function getQueueTypesKey() {
+		return "jobqueue:aggregator:h-queue-types:v1"; // global
+	}
+
+	/**
+	 * @return string
+	 */
+	private function getWikiSetKey() {
+		return "jobqueue:aggregator:s-wikis:v1"; // global
+	}
+
+	/**
+	 * @param string $type
+	 * @param string $wiki
+	 * @return string (per JobQueueAggregatorRedis.php)
+	 */
+	private function encQueueName( $type, $wiki ) {
+		return rawurlencode( $type ) . '/' . rawurlencode( $wiki );
+	}
+
+	/**
+	 * @param string $name
+	 * @return string (per JobQueueAggregatorRedis.php)
+	 */
+	private function dencQueueName( $name ) {
+		list( $type, $wiki ) = explode( '/', $name, 2 );
+
+		return array( rawurldecode( $type ), rawurldecode( $wiki ) );
+	}
+
+	/**
+	 * @param string $server
+	 * @return Redis|boolean|array
+	 */
+	protected function getRedisConn( $server ) {
+		// Check the listing "dead" servers which have had a connection errors.
+		// Srvs are marked dead for a limited period of time, to
+		// avoid excessive overhead from repeated connection timeouts.
+		if ( isset( $this->downSrvs[$server] ) ) {
+			$now = time();
+			if ( $now > $this->downSrvs[$server] ) {
+				// Dead time expired
+				unset( $this->downSrvs[$server] );
+			} else {
+				// Server is dead
+				return false;
+			}
+		}
+
+		if ( isset( $this->conns[$server] ) ) {
+			return $this->conns[$server];
+		}
+
+		try {
+			$conn = new Redis();
+			list( $host, $port ) = explode( ':', $server ); // IPv4
+			$result = $conn->connect( $host, $port, 5 );
+			if ( !$result ) {
+				// Mark server down for some time to avoid further timeouts
+				$this->downSrvs[$server] = time() + 30;
+
+				return false;
+			}
+			if ( $this->password !== null ) {
+				$conn->auth( $this->password );
+			}
+		} catch ( RedisException $e ) {
+			$this->downSrvs[$server] = time() + 30;
+
+			return false;
+		}
+
+		if ( $conn ) {
+			$conn->setOption( Redis::OPT_READ_TIMEOUT, 5 );
+			$conn->setOption( Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP );
+			$this->conns[$server] = $conn;
+
+			return $conn;
+		} else {
+			return false;
+		}
+	}
+
+	/**
+	 * @param Redis $conn
+	 * @param string $cmd
+	 * @param array $args
+	 * @return mixed
+	 */
+	protected function redisCmd( Redis $conn, $cmd, array $args = array() ) {
+		$conn->clearLastError();
+		$res = call_user_func_array( array( $conn, $cmd ), $args );
+		if ( $conn->getLastError() ) {
+			// Make all errors be exceptions instead of "most but not all".
+			// This will let the caller know to reset the connection to be safe.
+			throw new RedisException( $conn->getLastError() );
+		}
+		return $res;
+	}
+}
