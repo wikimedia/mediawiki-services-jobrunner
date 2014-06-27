@@ -268,6 +268,7 @@ class RedisJobRunnerService {
 						$error = stream_get_contents( $pipes[2] );
 						print "Runner loop $id process in slot $slot " .
 							"gave status '{$status['exitcode']}':\n\t$error.\n";
+						$this->closeProcess( $id, $slot, $proc, $pipes );
 					}
 					++$free;
 					$queue = $this->selectQueue( $id, $slot, $prioMap, $pending );
@@ -361,6 +362,21 @@ class RedisJobRunnerService {
 	/**
 	 * @param integer $id
 	 * @param integer $slot
+	 * @param resource|bool $proc
+	 * @param array $pipes
+	 */
+	protected function closeProcess( $id, $slot, &$proc, array &$pipes ) {
+		if ( $proc ) {
+			print "Closing process in loop $id at slot $slot\n";
+			fclose( $pipes[1] );
+			fclose( $pipes[2] );
+			proc_close( $proc );
+		}
+	}
+
+	/**
+	 * @param integer $id
+	 * @param integer $slot
 	 * @param bool $highPrio
 	 * @param array $queue
 	 * @param resource|bool $proc
@@ -370,12 +386,8 @@ class RedisJobRunnerService {
 	protected function trySpawnRunner(
 		$id, $slot, $highPrio, array $queue, &$proc, array &$pipes
 	) {
-		if ( $proc ) {
-			print "Closing process in loop $id at slot $slot\n";
-			fclose( $pipes[1] );
-			fclose( $pipes[2] );
-			proc_close( $proc );
-		}
+		// Clean up the old process handles
+		$this->closeProcess( $id, $slot, $proc, $pipes );
 
 		// Pick a random queue
 		list( $type, $db ) = $queue;
