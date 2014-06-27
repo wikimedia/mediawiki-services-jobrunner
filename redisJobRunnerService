@@ -192,14 +192,14 @@ class RedisJobRunnerService {
 			$this->password = $config['password'];
 		}
 		if ( isset( $config['claimTTL'] ) ) {
-			$tuples = explode( ',', $loop );
+			$tuples = explode( ',', $config['claimTTL'] );
 			foreach ( $tuples as $tuple ) {
 				list( $type, $value ) = explode( ':', $tuple );
 				$this->claimTTLMap[$type] = (int)$value;
 			}
 		}
 		if ( isset( $config['attempts'] ) ) {
-			$tuples = explode( ',', $loop );
+			$tuples = explode( ',', $config['attempts'] );
 			foreach ( $tuples as $tuple ) {
 				list( $type, $value ) = explode( ':', $tuple );
 				$this->attemptsMap[$type] = (int)$value;
