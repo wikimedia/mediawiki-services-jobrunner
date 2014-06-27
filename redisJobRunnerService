@@ -166,12 +166,13 @@ class RedisJobRunnerService {
 		}
 
 		foreach ( explode( '|', $config['runners'] ) as $loop ) {
-			list( $runners, $types ) = explode( ':', $loop );
+			list( $runners, $types ) = explode( ':', trim( $loop ) );
 			if ( !ctype_digit( $runners ) || $runners < 1 ) {
 				throw new Exception( "Invalid number of job runners '$runners'." );
 			}
 			$types = explode( ',', $types );
 			foreach ( $types as $type ) {
+				$type = trim( $type );
 				if ( !preg_match( '/^[-~]?[a-zA-Z0-9]+|\*$/', $type ) ) {
 					throw new Exception( "Invalid job type '$type'." );
 				}
@@ -194,14 +195,14 @@ class RedisJobRunnerService {
 		if ( isset( $config['claimTTL'] ) ) {
 			$tuples = explode( ',', $config['claimTTL'] );
 			foreach ( $tuples as $tuple ) {
-				list( $type, $value ) = explode( ':', $tuple );
+				list( $type, $value ) = explode( ':', trim( $tuple ) );
 				$this->claimTTLMap[$type] = (int)$value;
 			}
 		}
 		if ( isset( $config['attempts'] ) ) {
 			$tuples = explode( ',', $config['attempts'] );
 			foreach ( $tuples as $tuple ) {
-				list( $type, $value ) = explode( ':', $tuple );
+				list( $type, $value ) = explode( ':', trim( $tuple ) );
 				$this->attemptsMap[$type] = (int)$value;
 			}
 		}
