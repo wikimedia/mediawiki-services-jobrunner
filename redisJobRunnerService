@@ -192,6 +192,7 @@ class RedisJobRunnerService {
 		if ( isset( $config['password'] ) ) {
 			$this->password = $config['password'];
 		}
+		$this->claimTTLMap['*'] = 3600; // default
 		if ( isset( $config['claimTTL'] ) ) {
 			$tuples = explode( ',', $config['claimTTL'] );
 			foreach ( $tuples as $tuple ) {
@@ -199,6 +200,7 @@ class RedisJobRunnerService {
 				$this->claimTTLMap[$type] = (int)$value;
 			}
 		}
+		$this->attemptsMap['*'] = 3; // default
 		if ( isset( $config['attempts'] ) ) {
 			$tuples = explode( ',', $config['attempts'] );
 			foreach ( $tuples as $tuple ) {
@@ -562,8 +564,12 @@ LUA;
 
 			$paramsByQueue = array();
 			foreach ( $types as $type ) {
-				$ttl = isset( $this->claimTTLMap[$type] ) ? $this->claimTTLMap[$type] : 3600;
-				$attempts = isset( $this->attemptsMap[$type] ) ? $this->attemptsMap[$type] : 3;
+				$ttl = isset( $this->claimTTLMap[$type] )
+					? $this->claimTTLMap[$type]
+					: $this->claimTTLMap['*'];
+				$attempts = isset( $this->attemptsMap[$type] )
+					? $this->attemptsMap[$type]
+					: $this->attemptsMap['*'];
 				foreach ( $wikiIds as $wikiId ) {
 					$paramsByQueue[] = array(
 						'queue'  => array( $type, $wikiId ),
