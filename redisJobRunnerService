@@ -44,7 +44,8 @@ ini_set( 'memory_limit', '256M' );
 RedisJobRunnerService::init(
 	getopt( '', array(
 		'aggrSrvs:', 'queueSrvs:', 'runners:',
-		'timeout::', 'config-file::', 'wrapper::', 'claimTTL::', 'attempts::'
+		'timeout::', 'config-file::', 'wrapper::', 'claimTTL::', 'attempts::',
+		'verbose'
 	) )
 )->main();
 
@@ -96,6 +97,8 @@ class RedisJobRunnerService {
 	/** @var string Redis password */
 	protected $password;
 
+	/** @var bool */
+	protected $verbose;
 	/** @var string MediaWiki script wrapper */
 	protected $wrapper;
 	/** @var Map of (id => (job type list,count) */
@@ -208,13 +211,14 @@ class RedisJobRunnerService {
 				$this->attemptsMap[$type] = (int)$value;
 			}
 		}
+		$this->verbose = isset( $config['verbose'] );
 	}
 
 	/**
 	 * Entry point method that starts the service in earnest and keeps running
 	 */
 	public function main() {
-		print "Starting jobs loops...\n";
+		$this->notice( "Starting jobs loops..." );
 
 		$prioMap = array(); // map of (id => (current priority, since))
 		$procMap = array(); // map of (id => slot # => proc_open handle, descriptors)
@@ -223,7 +227,7 @@ class RedisJobRunnerService {
 				$procMap[$id][$i] = array( 'hande' => false, 'pipes' => array() );
 				$prioMap[$id] = array( 'high' => true, 'since' => time() );
 			}
-			print "Initialized loop $id with {$info['runners']} runners.\n";
+			$this->notice( "Initialized loop $id with {$info['runners']} runners." );
 		}
 
 		while ( true ) {
@@ -233,31 +237,31 @@ class RedisJobRunnerService {
 			// Do periodic queue tasks on all queues every 5 minutes
 			$count = $this->executeReadyPeriodicTasks();
 			if ( is_int( $count ) ) {
-				print "Updated the state of $count jobs (recycle/undelay/abandon).\n";
+				$this->notice( "Updated the state of $count jobs (recycle/undelay/abandon)." );
 			}
 			// Get the list of ready queues
 			$pending = $this->getReadyQueueMap();
 			if ( !count( $pending ) ) {
-				print "No jobs available...\n\n";
+				$this->notice( "No jobs available...\n" );
 				sleep( 5 ); // no jobs
 				continue;
 			}
 			// Spawn new runners as slots become available
 			foreach ( $procMap as $id => &$procSlots ) {
-				print "Checking runner loop $id...\n";
+				$this->debug( "Checking runner loop $id..." );
 				// Implement high/low priority via time-sharing
 				if ( $prioMap[$id]['high']
 					&& ( time() - $prioMap[$id]['since'] ) > $this->lpMaxDelay
 				) {
 					$prioMap[$id]['high'] = false;
 					$prioMap[$id]['since'] = time();
-					print "Runner loop $id now in low priority.\n";
+					$this->debug( "Runner loop $id now in low priority." );
 				} elseif ( !$prioMap[$id]['high']
 					&& ( time() - $prioMap[$id]['since'] ) > $this->hpMaxDelay
 				) {
 					$prioMap[$id]['high'] = true;
 					$prioMap[$id]['since'] = time();
-					print "Runner loop $id now in high priority.\n";
+					$this->debug( "Runner loop $id now in high priority." );
 				}
 				// Get the free slots and replace them
 				foreach ( $procSlots as $slot => &$procSlot ) {
@@ -268,8 +272,8 @@ class RedisJobRunnerService {
 						continue;
 					} elseif ( $status && $status['exitcode'] != 0 ) {
 						$error = stream_get_contents( $pipes[2] );
-						print "Runner loop $id process in slot $slot " .
-							"gave status '{$status['exitcode']}':\n\t$error.\n";
+						$this->error( "Runner loop $id process in slot $slot " .
+							"gave status '{$status['exitcode']}':\n\t$error." );
 						$this->closeProcess( $id, $slot, $proc, $pipes );
 					}
 					++$free;
@@ -284,31 +288,31 @@ class RedisJobRunnerService {
 					++$spawned;
 				}
 				if ( !$free ) {
-					print "Runner loop $id is full.\n\n";
+					$this->debug( "Runner loop $id is full.\n" );
 				} else if ( !$found ) {
 					// Try the other priority set
 					if ( $prioMap[$id]['high'] ) {
 						$prioMap[$id]['high'] = false;
-						print "Runner loop $id now in low priority.\n";
+						$this->debug( "Runner loop $id now in low priority." );
 					} else {
 						$prioMap[$id]['high'] = true;
-						print "Runner loop $id now in high priority.\n";
+						$this->debug( "Runner loop $id now in high priority." );
 					}
 					$prioMap[$id]['since'] = time();
-					print "Runner loop $id has no jobs.\n\n";
+					$this->debug( "Runner loop $id has no jobs.\n" );
 				} else {
-					print "Done.\n\n";
+					$this->debug( "Done checking loop $id.\n" );
 				}
 			}
 			// Backoff if there is nothing to do
 			if ( !$free ) {
-				print "All runner loops full.\n\n";
+				$this->debug( "All runner loops full.\n" );
 				usleep( 100000 );
 			} elseif ( !$spawned ) {
-				print "Runners have free slots, but there are no jobs.\n\n";
+				$this->debug( "Runners have free slots, but there are no appropriate jobs.\n" );
 				usleep( 1000000 );
 			}
-			print "Memory usage: " . memory_get_usage() . ".\n";
+			$this->debug( "Memory usage: " . memory_get_usage() . "." );
 		}
 	}
 
@@ -369,7 +373,7 @@ class RedisJobRunnerService {
 	 */
 	protected function closeProcess( $id, $slot, &$proc, array &$pipes ) {
 		if ( $proc ) {
-			print "Closing process in loop $id at slot $slot\n";
+			$this->debug( "Closing process in loop $id at slot $slot" );
 			fclose( $pipes[1] );
 			fclose( $pipes[2] );
 			proc_close( $proc );
@@ -417,14 +421,14 @@ class RedisJobRunnerService {
 			2 => array( "pipe", "w" ) // stderr (child)
 		);
 
-		print "Spawning runner in loop $id at slot $slot ($type, $db):\n\t$cmd.\n";
+		$this->notice( "Spawning runner in loop $id at slot $slot ($type, $db):\n\t$cmd." );
 
 		// Start the runner in the background
 		$proc = proc_open( $cmd, $descriptors, $pipes );
 		fclose( $pipes[0] );
 
 		if ( !$proc ) {
-			trigger_error( "Could not spawn process in loop $id: $cmd" );
+			$this->error( "Could not spawn process in loop $id: $cmd" );
 		}
 
 		return (bool)$proc;
@@ -739,5 +743,19 @@ LUA;
 			throw new RedisException( $conn->getLastError() );
 		}
 		return $res;
+	}
+
+	protected function debug( $s ) {
+		if ( $this->verbose ) {
+			print "$s\n";
+		}
+	}
+
+	protected function notice( $s ) {
+		print date( DATE_ISO8601 ) . ": $s\n";
+	}
+
+	protected function error( $s ) {
+		fwrite( STDERR, "$s\n" );
 	}
 }
