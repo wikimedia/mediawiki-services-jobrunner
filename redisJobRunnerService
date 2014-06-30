@@ -45,7 +45,7 @@ RedisJobRunnerService::init(
 	getopt( '', array(
 		'aggrSrvs:', 'queueSrvs:', 'runners:',
 		'timeout::', 'config-file::', 'wrapper::', 'claimTTL::', 'attempts::',
-		'verbose'
+		'verbose', 'help'
 	) )
 )->main();
 
@@ -136,7 +136,7 @@ class RedisJobRunnerService {
 		}
 
 		foreach ( array( 'aggrSrvs', 'queueSrvs', 'runners' ) as $par ) {
-			if ( !isset( $config[$par] ) ) {
+			if ( !isset( $config[$par] ) && isset( $config['help'] ) ) {
 				die( "Usage: php RedisJobRunnerService.php\n" .
 					"--config-file=<path>\n" .
 					"--aggrSrvs=<address>[,address]...\n" .
@@ -242,7 +242,7 @@ class RedisJobRunnerService {
 			// Get the list of ready queues
 			$pending = $this->getReadyQueueMap();
 			if ( !count( $pending ) ) {
-				$this->notice( "No jobs available...\n" );
+				$this->notice( "No jobs available..." );
 				sleep( 5 ); // no jobs
 				continue;
 			}
@@ -270,11 +270,13 @@ class RedisJobRunnerService {
 					$status = $proc ? proc_get_status( $proc ) : false;
 					if ( $status && $status['running'] ) {
 						continue;
-					} elseif ( $status && $status['exitcode'] != 0 ) {
-						$error = stream_get_contents( $pipes[2] );
-						$this->error( "Runner loop $id process in slot $slot " .
-							"gave status '{$status['exitcode']}':\n\t$error." );
-						$this->closeProcess( $id, $slot, $proc, $pipes );
+					} elseif ( $status && !$status['running'] ) {
+						if ( $status['exitcode'] != 0 ) {
+							$error = stream_get_contents( $pipes[2] );
+							$this->error( "Runner loop $id process in slot $slot " .
+								"gave status '{$status['exitcode']}':\n\t$error." );
+						}
+						$this->closeRunner( $id, $slot, $proc, $pipes );
 					}
 					++$free;
 					$queue = $this->selectQueue( $id, $slot, $prioMap, $pending );
@@ -282,13 +284,15 @@ class RedisJobRunnerService {
 						break;
 					}
 					$found = true;
+					// Clean up the old process handles
+					$this->closeRunner( $id, $slot, $proc, $pipes );
 					// Spawn a job runner for this loop ID
 					$highPrio = $prioMap[$id]['high'];
-					$this->trySpawnRunner( $id, $slot, $highPrio, $queue, $proc, $pipes );
+					$this->spawnRunner( $id, $slot, $highPrio, $queue, $proc, $pipes );
 					++$spawned;
 				}
 				if ( !$free ) {
-					$this->debug( "Runner loop $id is full.\n" );
+					$this->debug( "Runner loop $id is full." );
 				} else if ( !$found ) {
 					// Try the other priority set
 					if ( $prioMap[$id]['high'] ) {
@@ -299,17 +303,17 @@ class RedisJobRunnerService {
 						$this->debug( "Runner loop $id now in high priority." );
 					}
 					$prioMap[$id]['since'] = time();
-					$this->debug( "Runner loop $id has no jobs.\n" );
+					$this->debug( "Runner loop $id has no jobs." );
 				} else {
-					$this->debug( "Done checking loop $id.\n" );
+					$this->debug( "Done checking loop $id." );
 				}
 			}
 			// Backoff if there is nothing to do
 			if ( !$free ) {
-				$this->debug( "All runner loops full.\n" );
+				$this->debug( "All runner loops full." );
 				usleep( 100000 );
 			} elseif ( !$spawned ) {
-				$this->debug( "Runners have free slots, but there are no appropriate jobs.\n" );
+				$this->debug( "Runners have free slots, but there are no appropriate jobs." );
 				usleep( 1000000 );
 			}
 			$this->debug( "Memory usage: " . memory_get_usage() . "." );
@@ -368,33 +372,15 @@ class RedisJobRunnerService {
 	/**
 	 * @param integer $id
 	 * @param integer $slot
-	 * @param resource|bool $proc
-	 * @param array $pipes
-	 */
-	protected function closeProcess( $id, $slot, &$proc, array &$pipes ) {
-		if ( $proc ) {
-			$this->debug( "Closing process in loop $id at slot $slot" );
-			fclose( $pipes[1] );
-			fclose( $pipes[2] );
-			proc_close( $proc );
-		}
-	}
-
-	/**
-	 * @param integer $id
-	 * @param integer $slot
 	 * @param bool $highPrio
 	 * @param array $queue
 	 * @param resource|bool $proc
 	 * @param array $pipes
 	 * @return bool
 	 */
-	protected function trySpawnRunner(
+	protected function spawnRunner(
 		$id, $slot, $highPrio, array $queue, &$proc, array &$pipes
 	) {
-		// Clean up the old process handles
-		$this->closeProcess( $id, $slot, $proc, $pipes );
-
 		// Pick a random queue
 		list( $type, $db ) = $queue;
 		$encType = escapeshellarg( $type );
@@ -426,12 +412,35 @@ class RedisJobRunnerService {
 		// Start the runner in the background
 		$proc = proc_open( $cmd, $descriptors, $pipes );
 		fclose( $pipes[0] );
+		unset( $pipes[0] ); // unused
 
 		if ( !$proc ) {
 			$this->error( "Could not spawn process in loop $id: $cmd" );
 		}
 
 		return (bool)$proc;
+	}
+
+	/**
+	 * @param integer $id
+	 * @param integer $slot
+	 * @param resource|bool $proc
+	 * @param array $pipes
+	 */
+	protected function closeRunner( $id, $slot, &$proc, array &$pipes ) {
+		if ( $proc ) {
+			$this->notice( "Closing process in loop $id at slot $slot" );
+			if ( $pipes[1] !== false ) {
+				fclose( $pipes[1] );
+				$pipes[1] = false;
+			}
+			if ( $pipes[2] !== false ) {
+				fclose( $pipes[2] );
+				$pipes[2] = false;
+			}
+			proc_close( $proc );
+			$proc = false;
+		}
 	}
 
 	/**
