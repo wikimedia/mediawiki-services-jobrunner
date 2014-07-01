@@ -218,26 +218,58 @@ class RedisJobRunnerService {
 	 * Entry point method that starts the service in earnest and keeps running
 	 */
 	public function main() {
-		$this->notice( "Starting jobs loops..." );
+		$this->notice( "Starting jobs loop(s)..." );
 
 		$prioMap = array(); // map of (id => (current priority, since))
-		$procMap = array(); // map of (id => slot # => proc_open handle, descriptors)
+		$procMap = array(); // map of (id => slot # => process handle, descriptors)
 		foreach ( $this->loopMap as $id => $info ) {
 			for ( $i=0; $i < $info['runners']; ++$i ) {
-				$procMap[$id][$i] = array( 'hande' => false, 'pipes' => array() );
+				$procMap[$id][$i] = array(
+					'handle' => false, 'pipes' => array(), 'cmd' => null, 'stime' => 0 );
 				$prioMap[$id] = array( 'high' => true, 'since' => time() );
 			}
-			$this->notice( "Initialized loop $id with {$info['runners']} runners." );
+			$this->notice( "Initialized loop $id with {$info['runners']} runner(s)." );
+		}
+
+		// Setup signal handlers
+		$handlerFunc = function( $signo ) use ( &$procMap ) {
+			print "Caught signal ($signo)\n";
+			foreach ( $procMap as $id => &$procSlots ) {
+				foreach ( $procSlots as $slot => &$procSlot ) {
+					if ( !$procSlot['handle'] ) {
+						continue;
+					}
+					fclose( $procSlot['pipes'][1] );
+					fclose( $procSlot['pipes'][2] );
+					$status = proc_get_status( $procSlot['handle'] );
+					print "Sending SIGTERM to {$status['pid']}.\n";
+					proc_terminate( $procSlot['handle'] );
+				}
+			}
+			exit( 128 + $signo );
+		};
+		$useSignals = function_exists( 'pcntl_signal' );
+		if ( $useSignals ) {
+			$ok = pcntl_signal( SIGHUP, $handlerFunc )
+				&& pcntl_signal( SIGINT, $handlerFunc )
+				&& pcntl_signal( SIGTERM, $handlerFunc );
+			if ( !$ok ) {
+				throw new Exception( 'Could not install singal handlers.' );
+			}
 		}
 
 		while ( true ) {
-			$free = 0;
-			$spawned = 0;
+			if ( $useSignals ) {
+				pcntl_signal_dispatch();
+			}
+
+			$anyNew = 0;
+			$anyFree = 0;
 			$found = false;
 			// Do periodic queue tasks on all queues every 5 minutes
 			$count = $this->executeReadyPeriodicTasks();
 			if ( is_int( $count ) ) {
-				$this->notice( "Updated the state of $count jobs (recycle/undelay/abandon)." );
+				$this->notice( "Updated the state of $count job(s) (recycle/undelay/abandon)." );
 			}
 			// Get the list of ready queues
 			$pending = $this->getReadyQueueMap();
@@ -263,38 +295,14 @@ class RedisJobRunnerService {
 					$prioMap[$id]['since'] = time();
 					$this->debug( "Runner loop $id now in high priority." );
 				}
-				// Get the free slots and replace them
-				foreach ( $procSlots as $slot => &$procSlot ) {
-					$proc =& $procSlot['handle'];
-					$pipes =& $procSlot['pipes'];
-					$status = $proc ? proc_get_status( $proc ) : false;
-					if ( $status && $status['running'] ) {
-						continue;
-					} elseif ( $status && !$status['running'] ) {
-						if ( $status['exitcode'] != 0 ) {
-							$error = stream_get_contents( $pipes[2] );
-							$this->error( "Runner loop $id process in slot $slot " .
-								"gave status '{$status['exitcode']}':\n\t$error." );
-						}
-						$this->closeRunner( $id, $slot, $proc, $pipes );
-					}
-					++$free;
-					$queue = $this->selectQueue( $id, $slot, $prioMap, $pending );
-					if ( !$queue ) {
-						break;
-					}
-					$found = true;
-					// Clean up the old process handles
-					$this->closeRunner( $id, $slot, $proc, $pipes );
-					// Spawn a job runner for this loop ID
-					$highPrio = $prioMap[$id]['high'];
-					$this->spawnRunner( $id, $slot, $highPrio, $queue, $proc, $pipes );
-					++$spawned;
-				}
+				// Find any free slots and replace them with new processes
+				list( $free, $new ) = $this->refillSlots( $id, $procSlots, $prioMap, $pending );
+				$anyFree += $free;
+				$anyNew += $new;
+				// Rotate the priority from high/low and back if no jobs were found
 				if ( !$free ) {
 					$this->debug( "Runner loop $id is full." );
-				} else if ( !$found ) {
-					// Try the other priority set
+				} elseif ( !$new ) {
 					if ( $prioMap[$id]['high'] ) {
 						$prioMap[$id]['high'] = false;
 						$this->debug( "Runner loop $id now in low priority." );
@@ -309,15 +317,62 @@ class RedisJobRunnerService {
 				}
 			}
 			// Backoff if there is nothing to do
-			if ( !$free ) {
+			if ( !$anyFree ) {
 				$this->debug( "All runner loops full." );
 				usleep( 100000 );
-			} elseif ( !$spawned ) {
-				$this->debug( "Runners have free slots, but there are no appropriate jobs." );
+			} elseif ( !$anyNew ) {
+				$this->debug( "Loops have free slots, but there are no appropriate jobs." );
 				usleep( 1000000 );
 			}
 			$this->debug( "Memory usage: " . memory_get_usage() . "." );
 		}
+	}
+
+	/**
+	 * @param integer $id
+	 * @param array $procSlots
+	 * @param array $prioMap
+	 * @param array $pending
+	 * @return array
+	 */
+	protected function refillSlots( $id, array &$procSlots, array $prioMap, array $pending ) {
+		$free = 0;
+		$new = 0;
+		foreach ( $procSlots as $slot => &$procSlot ) {
+			$status = $procSlot['handle']
+				? proc_get_status( $procSlot['handle'] )
+				: false;
+			if ( $status && $status['running'] ) {
+				if ( ( time() - $procSlot['stime'] ) >= $this->maxProcReal ) {
+					$cmd = $procSlot['cmd'];
+					$this->error( "Runner loop $id process in slot $slot timed out:\n$cmd." );
+					$this->closeRunner( $id, $slot, $procSlot, SIGKILL );
+				} else {
+					continue; // slot is busy
+				}
+			} elseif ( $status && !$status['running'] ) {
+				if ( $status['exitcode'] != 0 ) {
+					$error = stream_get_contents( $procSlot['pipes'][2] );
+					$this->error( "Runner loop $id process in slot $slot " .
+						"gave status '{$status['exitcode']}':\n\t$error." );
+				}
+				$this->closeRunner( $id, $slot, $procSlot );
+			} elseif ( !$status && $procSlot['handle'] ) {
+				$this->error( "Runner loop $id process in slot $slot gave no status." );
+				$this->closeRunner( $id, $slot, $procSlot );
+			}
+			++$free;
+			$queue = $this->selectQueue( $id, $slot, $prioMap, $pending );
+			if ( !$queue ) {
+				break;
+			}
+			// Spawn a job runner for this loop ID
+			$highPrio = $prioMap[$id]['high'];
+			$this->spawnRunner( $id, $slot, $highPrio, $queue, $procSlot );
+			++$new;
+		}
+
+		return array( $free, $new );
 	}
 
 	/**
@@ -374,13 +429,10 @@ class RedisJobRunnerService {
 	 * @param integer $slot
 	 * @param bool $highPrio
 	 * @param array $queue
-	 * @param resource|bool $proc
-	 * @param array $pipes
+	 * @param array $procSlot
 	 * @return bool
 	 */
-	protected function spawnRunner(
-		$id, $slot, $highPrio, array $queue, &$proc, array &$pipes
-	) {
+	protected function spawnRunner( $id, $slot, $highPrio, array $queue, array &$procSlot ) {
 		// Pick a random queue
 		list( $type, $db ) = $queue;
 		$encType = escapeshellarg( $type );
@@ -398,7 +450,7 @@ class RedisJobRunnerService {
 		$cmd = "$script --wiki=$encWiki --type=$encType " .
 			"--maxtime=$encMaxTime --memory-limit=$encMaxMem";
 		if ( substr( php_uname(), 0, 7 ) !== 'Windows' ) {
-			$cmd = "nice -n 19 timeout {$this->maxProcReal} $cmd";
+			$cmd = "nice -n 19 $cmd";
 		}
 
 		$descriptors = array(
@@ -410,37 +462,50 @@ class RedisJobRunnerService {
 		$this->notice( "Spawning runner in loop $id at slot $slot ($type, $db):\n\t$cmd." );
 
 		// Start the runner in the background
-		$proc = proc_open( $cmd, $descriptors, $pipes );
-		fclose( $pipes[0] );
-		unset( $pipes[0] ); // unused
+		$procSlot['handle'] = proc_open( $cmd, $descriptors, $procSlot['pipes'] );
+		fclose( $procSlot['pipes'][0] );
+		unset( $procSlot['pipes'][0] ); // unused
+		$procSlot['cmd'] = $cmd;
+		$procSlot['stime'] = time();
 
-		if ( !$proc ) {
+		if ( $procSlot['handle'] ) {
+			return true;
+		} else {
 			$this->error( "Could not spawn process in loop $id: $cmd" );
+			return false;
 		}
-
-		return (bool)$proc;
 	}
 
 	/**
 	 * @param integer $id
 	 * @param integer $slot
-	 * @param resource|bool $proc
-	 * @param array $pipes
+	 * @param array $procSlot
+	 * @param integer $signal
 	 */
-	protected function closeRunner( $id, $slot, &$proc, array &$pipes ) {
-		if ( $proc ) {
-			$this->notice( "Closing process in loop $id at slot $slot" );
-			if ( $pipes[1] !== false ) {
-				fclose( $pipes[1] );
-				$pipes[1] = false;
+	protected function closeRunner( $id, $slot, array &$procSlot, $signal = null ) {
+		if ( $procSlot['pipes'] ) {
+			if ( $procSlot['pipes'][1] !== false ) {
+				fclose( $procSlot['pipes'][1] );
+				$procSlot['pipes'][1] = false;
 			}
-			if ( $pipes[2] !== false ) {
-				fclose( $pipes[2] );
-				$pipes[2] = false;
+			if ( $procSlot['pipes'][2] !== false ) {
+				fclose( $procSlot['pipes'][2] );
+				$procSlot['pipes'][2] = false;
 			}
-			proc_close( $proc );
-			$proc = false;
 		}
+		if ( $procSlot['handle'] ) {
+			$this->notice( "Closing process in loop $id at slot $slot" );
+			if ( $signal !== null ) {
+				// Tell the process to close with a signal
+				proc_terminate( $procSlot['handle'], $signal );
+			} else {
+				// Wait for the process to finish on its own
+				proc_close( $procSlot['handle'] );
+			}
+		}
+		$procSlot['handle'] = false;
+		$procSlot['stime'] = 0;
+		$procSlot['cmd'] = null;
 	}
 
 	/**
