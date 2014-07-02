@@ -44,7 +44,7 @@ ini_set( 'memory_limit', '256M' );
 RedisJobRunnerService::init(
 	getopt( '', array(
 		'aggrSrvs:', 'queueSrvs:', 'runners:',
-		'timeout::', 'config-file::', 'wrapper::', 'claimTTL::', 'attempts::',
+		'config-file::', 'wrapper::', 'claimTTL::', 'attempts::', 'maxReal::', 'maxMem::',
 		'verbose', 'help'
 	) )
 )->main();
@@ -78,17 +78,6 @@ class RedisJobRunnerService {
 	 * @var integer
 	 */
 	protected $hpMaxTime = 30;
-	/**
-	 * Default total memory limit for each runJobs.php process
-	 * @var string
-	 */
-	protected $maxProcMem = '300M';
-	/**
-	 * Max time before killing a PHP runner via timeout.
-	 * This should be much higher than hpmaxtime and lpmaxtime.
-	 * @var integer
-	 */
-	protected $maxProcReal = 3600;
 
 	/** @var Array List of IP:<port> entries */
 	protected $queueSrvs = array();
@@ -103,10 +92,14 @@ class RedisJobRunnerService {
 	protected $wrapper;
 	/** @var Map of (id => (job type list,count) */
 	protected $loopMap = array();
-	/** @var Map of (id => integer seconds) */
+	/** @var Map of (job type => integer seconds) */
 	protected $claimTTLMap = array();
-	/** @var Map of (id => integer) */
+	/** @var Map of (job type => integer) */
 	protected $attemptsMap = array();
+	/** @var Map of (job type => integer) */
+	protected $maxRealMap = array();
+	/** @var Map of (job type => integer) */
+	protected $maxMemMap = array();
 
 	/** @var Map of (server => Redis object) */
 	protected $conns = array();
@@ -136,17 +129,18 @@ class RedisJobRunnerService {
 		}
 
 		foreach ( array( 'aggrSrvs', 'queueSrvs', 'runners' ) as $par ) {
-			if ( !isset( $config[$par] ) && isset( $config['help'] ) ) {
+			if ( !isset( $config[$par] ) || isset( $config['help'] ) ) {
 				die( "Usage: php RedisJobRunnerService.php\n" .
 					"--config-file=<path>\n" .
 					"--aggrSrvs=<address>[,address]...\n" .
 					"--queueSrvs=<address>[,address]...>\n" .
 					"--runners=<count>:<type>[,type]...[|<count>:<type>[,type]...]...\n" .
-					"--timeout=<seconds>\n" .
 					"--memory=<integer>M\n" .
 					"--wrapper=<script wrapper>" .
 					"--claimTTL=<type>:<seconds>[,<type>:<seconds>]...\n" .
-					"--attempts=<type>:<integer>[,<type>:<integer>]...\n"
+					"--attempts=<type>:<integer>[,<type>:<integer>]...\n" .
+					"--maxReal=<type>:<integer>[,<type>:<integer>]...\n" .
+					"--maxMem=<type>:<integer>[,<type>:<integer>(B|M)]...\n"
 				);
 			}
 		}
@@ -211,6 +205,24 @@ class RedisJobRunnerService {
 				$this->attemptsMap[$type] = (int)$value;
 			}
 		}
+		// Avoid killing processes before they get a fair chance to exit
+		$minRealTime = 2 * max( $this->lpMaxTime, $this->hpMaxTime );
+		$this->maxRealMap['*'] = 3600; // default
+		if ( isset( $config['maxReal'] ) ) {
+			$tuples = explode( ',', $config['maxReal'] );
+			foreach ( $tuples as $tuple ) {
+				list( $type, $value ) = explode( ':', trim( $tuple ) );
+				$this->maxRealMap[$type] = max( (int)$value, $minRealTime );
+			}
+		}
+		$this->maxMemMap['*'] = '300M'; // default
+		if ( isset( $config['maxMem'] ) ) {
+			$tuples = explode( ',', $config['maxMem'] );
+			foreach ( $tuples as $tuple ) {
+				list( $type, $value ) = explode( ':', trim( $tuple ) );
+				$this->maxMemMap[$type] = (int)$value;
+			}
+		}
 		$this->verbose = isset( $config['verbose'] );
 	}
 
@@ -225,7 +237,12 @@ class RedisJobRunnerService {
 		foreach ( $this->loopMap as $id => $info ) {
 			for ( $i=0; $i < $info['runners']; ++$i ) {
 				$procMap[$id][$i] = array(
-					'handle' => false, 'pipes' => array(), 'cmd' => null, 'stime' => 0 );
+					'handle' => false,
+					'pipes'  => array(),
+					'type'   => null,
+					'cmd'    => null,
+					'stime'  => 0
+				);
 				$prioMap[$id] = array( 'high' => true, 'since' => time() );
 			}
 			$this->notice( "Initialized loop $id with {$info['runners']} runner(s)." );
@@ -343,7 +360,10 @@ class RedisJobRunnerService {
 				? proc_get_status( $procSlot['handle'] )
 				: false;
 			if ( $status && $status['running'] ) {
-				if ( ( time() - $procSlot['stime'] ) >= $this->maxProcReal ) {
+				$maxReal = isset( $this->maxReal[$procSlot['type']] )
+					? $this->maxRealMap[$procSlot['type']]
+					: $this->maxRealMap['*'];
+				if ( ( time() - $procSlot['stime'] ) >= $maxReal ) {
 					$cmd = $procSlot['cmd'];
 					$this->error( "Runner loop $id process in slot $slot timed out:\n$cmd." );
 					$this->closeRunner( $id, $slot, $procSlot, SIGKILL );
@@ -438,7 +458,9 @@ class RedisJobRunnerService {
 		$encType = escapeshellarg( $type );
 		$encWiki = escapeshellarg( $db );
 		$encMaxTime = escapeshellarg( $highPrio ? $this->lpMaxTime : $this->hpMaxTime );
-		$encMaxMem = escapeshellarg( $this->maxProcMem );
+		$encMaxMem = escapeshellarg(
+			isset( $this->maxMemMap[$type] ) ? $this->maxMemMap[$type] : $this->maxMemMap['*']
+		);
 
 		// Apply any HET-deploy style wrapper
 		$script = $this->wrapper
@@ -465,6 +487,7 @@ class RedisJobRunnerService {
 		$procSlot['handle'] = proc_open( $cmd, $descriptors, $procSlot['pipes'] );
 		fclose( $procSlot['pipes'][0] );
 		unset( $procSlot['pipes'][0] ); // unused
+		$procSlot['type'] = $type;
 		$procSlot['cmd'] = $cmd;
 		$procSlot['stime'] = time();
 
@@ -504,6 +527,7 @@ class RedisJobRunnerService {
 			}
 		}
 		$procSlot['handle'] = false;
+		$procSlot['type'] = null;
 		$procSlot['stime'] = 0;
 		$procSlot['cmd'] = null;
 	}
