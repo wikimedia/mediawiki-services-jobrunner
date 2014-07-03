@@ -135,7 +135,6 @@ class RedisJobRunnerService {
 					"--aggrSrvs=<address>[,address]...\n" .
 					"--queueSrvs=<address>[,address]...>\n" .
 					"--runners=<count>:<type>[,type]...[|<count>:<type>[,type]...]...\n" .
-					"--memory=<integer>M\n" .
 					"--wrapper=<script wrapper>" .
 					"--claimTTL=<type>:<seconds>[,<type>:<seconds>]...\n" .
 					"--attempts=<type>:<integer>[,<type>:<integer>]...\n" .
@@ -181,9 +180,6 @@ class RedisJobRunnerService {
 
 		if ( isset( $config['timeout'] ) ) {
 			$this->maxProcReal = (int)$config['timeout'];
-		}
-		if ( isset( $config['memory'] ) ) {
-			$this->maxProcMem = $config['memory'];
 		}
 		if ( isset( $config['wrapper'] ) ) {
 			$this->wrapper = $config['wrapper'];
