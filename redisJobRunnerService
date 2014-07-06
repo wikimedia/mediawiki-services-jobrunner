@@ -162,7 +162,7 @@ class RedisJobRunnerService {
 			throw new Exception( "Empty list for 'queueSrvs'." );
 		}
 
-		foreach ( explode( '|', $config['runners'] ) as $loop ) {
+		foreach ( explode( '&', $config['runners'] ) as $loop ) {
 			list( $runners, $types ) = explode( ':', trim( $loop ) );
 			if ( !ctype_digit( $runners ) || $runners < 1 ) {
 				throw new Exception( "Invalid number of job runners '$runners'." );
