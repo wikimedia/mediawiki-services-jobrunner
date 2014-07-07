@@ -45,6 +45,7 @@ RedisJobRunnerService::init(
 	getopt( '', array(
 		'aggrSrvs:', 'queueSrvs:', 'runners:',
 		'config-file::', 'wrapper::', 'claimTTL::', 'attempts::', 'maxReal::', 'maxMem::',
+		'statsdAddr::',
 		'verbose', 'help'
 	) )
 )->main();
@@ -100,6 +101,10 @@ class RedisJobRunnerService {
 	protected $maxRealMap = array();
 	/** @var Map of (job type => integer) */
 	protected $maxMemMap = array();
+	/** @var String IP address or hostname */
+	protected $statsdHost;
+	/** @var integer Port number */
+	protected $statsdPort;
 
 	/** @var Map of (server => Redis object) */
 	protected $conns = array();
@@ -139,7 +144,8 @@ class RedisJobRunnerService {
 					"--claimTTL=<type>:<seconds>[,<type>:<seconds>]...\n" .
 					"--attempts=<type>:<integer>[,<type>:<integer>]...\n" .
 					"--maxReal=<type>:<integer>[,<type>:<integer>]...\n" .
-					"--maxMem=<type>:<integer>[,<type>:<integer>(B|M)]...\n"
+					"--maxMem=<type>:<integer>[,<type>:<integer>(B|M)]...\n" .
+					"--statsdAddr=<address>\n"
 				);
 			}
 		}
@@ -225,6 +231,15 @@ class RedisJobRunnerService {
 			foreach ( $tuples as $tuple ) {
 				list( $type, $value ) = explode( ':', trim( $tuple ) );
 				$this->maxMemMap[$type] = (int)$value;
+			}
+		}
+		if ( isset( $config['statsdAddr'] ) ) {
+			$m = array();
+			if ( preg_match( '/^(.+):(\d+)$/', $config['statsdAddr'], $m ) ) {
+				$this->statsdHost = $m[1];
+				$this->statsdPort = (int)$m[2];
+			} else {
+				throw new Exception( "Invalid profiler address '{$config['statsdAddr']}'." );
 			}
 		}
 		$this->verbose = isset( $config['verbose'] );
@@ -717,12 +732,14 @@ LUA;
 					$mapSet = array(); // map of (queue name => timestamp)
 					foreach ( $res as $i => $result ) {
 						$tasksRun += array_sum( $result );
-						// @TODO: send udp stat calls for these state changes
 						list( $released, $abandoned, $pruned, $undelayed ) = $result;
 						if ( $released > 0 || $undelayed > 0 ) {
 							list( $qType, $qWiki ) = $paramsByQueue[$i]['queue'];
 							$mapSet[$this->encQueueName( $qType, $qWiki )] = $now;
 						}
+						$this->incrStats( 'job-recycle', $qType, $released, $qWiki );
+						$this->incrStats( 'job-abandon', $qType, $abandoned, $qWiki );
+						$this->incrStats( 'job-undelay', $qType, $undelayed, $qWiki );
 					}
 				} catch ( RedisException $e ) {
 					unset( $this->conns[$qServer] );
@@ -847,16 +864,60 @@ LUA;
 		return $res;
 	}
 
+	/**
+	 * @param string $event
+	 * @param string $type
+	 * @param integer $delta
+	 * @param string $wiki
+	 * @return void
+	 */
+	protected function incrStats( $event, $type, $delta = 1, $wiki = null ) {
+		if ( !$this->statsdHost || $delta == 0 ) {
+			return; // nothing to do
+		}
+
+		static $format = "%s:%s|c\n";
+		$packet = sprintf( $format, "jobrunner.$event.$type.$wiki", $delta );
+
+		if ( !function_exists( 'socket_create' ) ) {
+			$this->debug( 'No "socket_create" method available.' );
+			return;
+		}
+
+		static $socket = null;
+		if ( !$socket ) {
+			$socket = socket_create( AF_INET, SOCK_DGRAM, SOL_UDP );
+		}
+
+		socket_sendto(
+			$socket,
+			$packet,
+			strlen( $packet ),
+			0,
+			$this->statsdHost,
+			$this->statsdPort
+		);
+	}
+
+	/**
+	 * @param string $s
+	 */
 	protected function debug( $s ) {
 		if ( $this->verbose ) {
 			print "$s\n";
 		}
 	}
 
+	/**
+	 * @param string $s
+	 */
 	protected function notice( $s ) {
 		print date( DATE_ISO8601 ) . ": $s\n";
 	}
 
+	/**
+	 * @param string $s
+	 */
 	protected function error( $s ) {
 		fwrite( STDERR, "$s\n" );
 	}
