@@ -728,9 +728,14 @@ LUA;
 					}
 					$res = $this->redisCmd( $qConn, 'exec' );
 
+					$failed = 0;
 					$now = time();
 					$mapSet = array(); // map of (queue name => timestamp)
 					foreach ( $res as $i => $result ) {
+						if ( !$result ) {
+							++$failed;
+							continue;
+						}
 						list( $qType, $qWiki ) = $paramsByQueue[$i]['queue'];
 						$tasksRun += array_sum( $result );
 						list( $released, $abandoned, $pruned, $undelayed ) = $result;
@@ -745,10 +750,15 @@ LUA;
 					unset( $this->conns[$qServer] );
 				}
 
+				if ( $failed > 0 ) {
+					$this->error( "Failed to do periodic tasks for $failed queue(s)." );
+				}
+
 				$this->redisCmd( $aConn, 'hMSet', array( $this->getReadyQueueKey(), $mapSet ) );
 			}
 		} catch ( RedisException $e ) {
 			unset( $this->conns[$aServer] );
+			$this->error( "Failed to do periodic tasks for all queue(s)." );
 		}
 
 		return $tasksRun;
@@ -827,6 +837,7 @@ LUA;
 			}
 			$result = $conn->connect( $host, $port, 5 );
 			if ( !$result ) {
+				$this->error( "Could not connect to Redis server $host:$port." );
 				// Mark server down for some time to avoid further timeouts
 				$this->downSrvs[$server] = time() + 30;
 
@@ -862,6 +873,7 @@ LUA;
 		$conn->clearLastError();
 		$res = call_user_func_array( array( $conn, $cmd ), $args );
 		if ( $conn->getLastError() ) {
+			$this->error( "Redis error: " . $conn->getLastError() );
 			// Make all errors be exceptions instead of "most but not all".
 			// This will let the caller know to reset the connection to be safe.
 			throw new RedisException( $conn->getLastError() );
