@@ -500,7 +500,7 @@ class RedisJobRunnerService {
 			2 => array( "pipe", "w" ) // stderr (child)
 		);
 
-		$this->notice( "Spawning runner in loop $id at slot $slot ($type, $db):\n\t$cmd." );
+		$this->debug( "Spawning runner in loop $id at slot $slot ($type, $db):\n\t$cmd." );
 
 		// Start the runner in the background
 		$procSlot['handle'] = proc_open( $cmd, $descriptors, $procSlot['pipes'] );
@@ -536,7 +536,7 @@ class RedisJobRunnerService {
 			}
 		}
 		if ( $procSlot['handle'] ) {
-			$this->notice( "Closing process in loop $id at slot $slot" );
+			$this->debug( "Closing process in loop $id at slot $slot" );
 			if ( $signal !== null ) {
 				// Tell the process to close with a signal
 				proc_terminate( $procSlot['handle'], $signal );
