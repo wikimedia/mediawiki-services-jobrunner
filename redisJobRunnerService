@@ -819,7 +819,12 @@ LUA;
 
 		try {
 			$conn = new Redis();
-			list( $host, $port ) = explode( ':', $server ); // IPv4
+			if ( strpos( $server, ':' ) === false ) {
+				$host = $server;
+				$port = null;
+			} else {
+				list( $host, $port ) = explode( ':', $server );
+			}
 			$result = $conn->connect( $host, $port, 5 );
 			if ( !$result ) {
 				// Mark server down for some time to avoid further timeouts
