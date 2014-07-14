@@ -731,10 +731,10 @@ LUA;
 					$now = time();
 					$mapSet = array(); // map of (queue name => timestamp)
 					foreach ( $res as $i => $result ) {
+						list( $qType, $qWiki ) = $paramsByQueue[$i]['queue'];
 						$tasksRun += array_sum( $result );
 						list( $released, $abandoned, $pruned, $undelayed ) = $result;
 						if ( $released > 0 || $undelayed > 0 ) {
-							list( $qType, $qWiki ) = $paramsByQueue[$i]['queue'];
 							$mapSet[$this->encQueueName( $qType, $qWiki )] = $now;
 						}
 						$this->incrStats( 'job-recycle', $qType, $released, $qWiki );
