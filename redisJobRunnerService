@@ -230,7 +230,7 @@ class RedisJobRunnerService {
 			$tuples = explode( ',', $config['maxMem'] );
 			foreach ( $tuples as $tuple ) {
 				list( $type, $value ) = explode( ':', trim( $tuple ) );
-				$this->maxMemMap[$type] = (int)$value;
+				$this->maxMemMap[$type] = $value;
 			}
 		}
 		if ( isset( $config['statsdAddr'] ) ) {
