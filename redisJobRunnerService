@@ -251,6 +251,7 @@ class RedisJobRunnerService {
 	public function main() {
 		$this->notice( "Starting jobs loop(s)..." );
 
+		$host = gethostname();
 		$prioMap = array(); // map of (id => (current priority, since))
 		$procMap = array(); // map of (id => slot # => process handle, descriptors)
 		foreach ( $this->loopMap as $id => $info ) {
@@ -294,11 +295,14 @@ class RedisJobRunnerService {
 			}
 		}
 
+		$memLast = memory_get_usage();
+		$this->incrStats( "start.$host", 1 );
 		while ( true ) {
 			if ( $useSignals ) {
 				pcntl_signal_dispatch();
 			}
 
+			$prioSwitches = 0;
 			$anyNew = 0;
 			$anyFree = 0;
 			$found = false;
@@ -306,11 +310,13 @@ class RedisJobRunnerService {
 			$count = $this->executeReadyPeriodicTasks();
 			if ( is_int( $count ) ) {
 				$this->notice( "Updated the state of $count job(s) (recycle/undelay/abandon)." );
+				$this->incrStats( "periodictasks.done.$host", 1 );
 			}
 			// Get the list of ready queues
 			$pending = $this->getReadyQueueMap();
 			if ( !count( $pending ) ) {
 				$this->notice( "No jobs available..." );
+				$this->incrStats( "idle.$host", 1 );
 				sleep( 5 ); // no jobs
 				continue;
 			}
@@ -324,12 +330,14 @@ class RedisJobRunnerService {
 					$prioMap[$id]['high'] = false;
 					$prioMap[$id]['since'] = time();
 					$this->debug( "Runner loop $id now in low priority." );
+					++$prioSwitches;
 				} elseif ( !$prioMap[$id]['high']
 					&& ( time() - $prioMap[$id]['since'] ) > $this->hpMaxDelay
 				) {
 					$prioMap[$id]['high'] = true;
 					$prioMap[$id]['since'] = time();
 					$this->debug( "Runner loop $id now in high priority." );
+					++$prioSwitches;
 				}
 				// Find any free slots and replace them with new processes
 				list( $free, $new ) = $this->refillSlots( $id, $procSlots, $prioMap, $pending );
@@ -348,19 +356,26 @@ class RedisJobRunnerService {
 					}
 					$prioMap[$id]['since'] = time();
 					$this->debug( "Runner loop $id has no jobs." );
+					++$prioSwitches;
 				} else {
 					$this->debug( "Done checking loop $id." );
 				}
 			}
+			$this->incrStats( "spawn.$host", $anyNew );
+			$this->incrStats( "prioritychange.$host", $prioSwitches );
 			// Backoff if there is nothing to do
 			if ( !$anyFree ) {
 				$this->debug( "All runner loops full." );
 				usleep( 100000 );
 			} elseif ( !$anyNew ) {
 				$this->debug( "Loops have free slots, but there are no appropriate jobs." );
-				usleep( 1000000 );
+				usleep( 100000 );
 			}
-			$this->debug( "Memory usage: " . memory_get_usage() . "." );
+			// Track memory usage
+			$memCurrent = memory_get_usage();
+			$this->debug( "Memory usage: $memCurrent bytes." );
+			$this->incrStats( "memory.$host", $memCurrent - $memLast );
+			$memLast = $memCurrent;
 		}
 	}
 
@@ -386,6 +401,7 @@ class RedisJobRunnerService {
 					$cmd = $procSlot['cmd'];
 					$this->error( "Runner loop $id process in slot $slot timed out:\n$cmd." );
 					$this->closeRunner( $id, $slot, $procSlot, SIGKILL );
+					$this->incrStats( 'runner-status.timeout', 1 );
 				} else {
 					continue; // slot is busy
 				}
@@ -394,11 +410,13 @@ class RedisJobRunnerService {
 					$error = stream_get_contents( $procSlot['pipes'][2] );
 					$this->error( "Runner loop $id process in slot $slot " .
 						"gave status '{$status['exitcode']}':\n\t$error." );
+					$this->incrStats( 'runner-status.error', 1 );
 				}
 				$this->closeRunner( $id, $slot, $procSlot );
 			} elseif ( !$status && $procSlot['handle'] ) {
 				$this->error( "Runner loop $id process in slot $slot gave no status." );
 				$this->closeRunner( $id, $slot, $procSlot );
+				$this->incrStats( 'runner-status.none', 1 );
 			}
 			++$free;
 			$queue = $this->selectQueue( $id, $slot, $prioMap, $pending );
@@ -514,6 +532,7 @@ class RedisJobRunnerService {
 			return true;
 		} else {
 			$this->error( "Could not spawn process in loop $id: $cmd" );
+			$this->incrStats( 'runner-status.error', 1 );
 			return false;
 		}
 	}
@@ -626,7 +645,10 @@ class RedisJobRunnerService {
 			}
 		}
 
+		$host = gethostname();
+
 		if ( !$aConn ) {
+			$this->incrStats( "periodictasks.failed.$host", 1 );
 			return $tasksRun;
 		}
 
@@ -674,9 +696,14 @@ class RedisJobRunnerService {
 		return {released,abandoned,pruned,undelayed}
 LUA;
 
+		$ok = true;
 		try {
 			$types = $this->redisCmd( $aConn, 'hKeys', array( $this->getQueueTypesKey() ) );
 			$wikiIds = $this->redisCmd( $aConn, 'sMembers', array( $this->getWikiSetKey() ) );
+			if ( !is_array( $types ) || !is_array( $wikiIds ) ) {
+				$this->incrStats( "periodictasks.failed.$host", 1 );
+				return $tasksRun;
+			}
 
 			shuffle( $types );
 			shuffle( $wikiIds );
@@ -715,9 +742,11 @@ LUA;
 			foreach ( $this->queueSrvs as $qServer ) {
 				$qConn = $this->getRedisConn( $qServer );
 				if ( !$qConn ) {
+					$ok = false;
 					continue; // partition down
 				}
 
+				$mapSet = array(); // map of (queue name => timestamp)
 				try {
 					$sha1 = $this->redisCmd( $qConn, 'script', array( 'load', $script ) );
 
@@ -728,12 +757,10 @@ LUA;
 					}
 					$res = $this->redisCmd( $qConn, 'exec' );
 
-					$failed = 0;
 					$now = time();
-					$mapSet = array(); // map of (queue name => timestamp)
 					foreach ( $res as $i => $result ) {
 						if ( !$result ) {
-							++$failed;
+							$ok = false;
 							continue;
 						}
 						list( $qType, $qWiki ) = $paramsByQueue[$i]['queue'];
@@ -742,23 +769,25 @@ LUA;
 						if ( $released > 0 || $undelayed > 0 ) {
 							$mapSet[$this->encQueueName( $qType, $qWiki )] = $now;
 						}
-						$this->incrStats( 'job-recycle', $qType, $released, $qWiki );
-						$this->incrStats( 'job-abandon', $qType, $abandoned, $qWiki );
-						$this->incrStats( 'job-undelay', $qType, $undelayed, $qWiki );
+						$this->incrStats( "job-recycle.$qType.$qWiki", $released );
+						$this->incrStats( "job-abandon.$qType.$qWiki", $abandoned );
+						$this->incrStats( "job-undelay.$qType.$qWiki", $undelayed );
 					}
 				} catch ( RedisException $e ) {
+					$ok = false;
 					unset( $this->conns[$qServer] );
-				}
-
-				if ( $failed > 0 ) {
-					$this->error( "Failed to do periodic tasks for $failed queue(s)." );
 				}
 
 				$this->redisCmd( $aConn, 'hMSet', array( $this->getReadyQueueKey(), $mapSet ) );
 			}
 		} catch ( RedisException $e ) {
+			$ok = false;
 			unset( $this->conns[$aServer] );
-			$this->error( "Failed to do periodic tasks for all queue(s)." );
+		}
+
+		if ( !$ok ) {
+			$this->error( "Failed to do periodic tasks for some queues." );
+			$this->incrStats( "periodictasks.failed.$host", 1 );
 		}
 
 		return $tasksRun;
@@ -883,18 +912,16 @@ LUA;
 
 	/**
 	 * @param string $event
-	 * @param string $type
 	 * @param integer $delta
-	 * @param string $wiki
 	 * @return void
 	 */
-	protected function incrStats( $event, $type, $delta = 1, $wiki = null ) {
+	protected function incrStats( $event, $delta = 1 ) {
 		if ( !$this->statsdHost || $delta == 0 ) {
 			return; // nothing to do
 		}
 
 		static $format = "%s:%s|c\n";
-		$packet = sprintf( $format, "jobrunner.$event.$type.$wiki", $delta );
+		$packet = sprintf( $format, "jobrunner.$event", $delta );
 
 		if ( !function_exists( 'socket_create' ) ) {
 			$this->debug( 'No "socket_create" method available.' );
