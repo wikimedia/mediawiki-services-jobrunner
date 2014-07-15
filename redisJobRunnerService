@@ -903,6 +903,7 @@ LUA;
 		$res = call_user_func_array( array( $conn, $cmd ), $args );
 		if ( $conn->getLastError() ) {
 			$this->error( "Redis error: " . $conn->getLastError() );
+			$this->incrStats( "redis-error." . gethostname(), 1 );
 			// Make all errors be exceptions instead of "most but not all".
 			// This will let the caller know to reset the connection to be safe.
 			throw new RedisException( $conn->getLastError() );
