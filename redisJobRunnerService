@@ -963,6 +963,6 @@ LUA;
 	 * @param string $s
 	 */
 	protected function error( $s ) {
-		fwrite( STDERR, "$s\n" );
+		fwrite( STDERR, date( DATE_ISO8601 ) . ": $s\n" );
 	}
 }
