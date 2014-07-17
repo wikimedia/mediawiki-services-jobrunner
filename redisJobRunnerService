@@ -249,7 +249,7 @@ class RedisJobRunnerService {
 	 * Entry point method that starts the service in earnest and keeps running
 	 */
 	public function main() {
-		$this->notice( "Starting jobs loop(s)..." );
+		$this->notice( "Starting job loop(s)..." );
 
 		$host = gethostname();
 		$prioMap = array(); // map of (id => (current priority, since))
@@ -574,13 +574,13 @@ class RedisJobRunnerService {
 	 * @return array
 	 */
 	protected function getReadyQueueMap() {
-		static $map = null; // cache
-		static $mapTimestamp = 0;
+		static $pendingDBs = array(); // cache
+		static $cacheTimestamp = 0; // UNIX timestamp
 
-		$pendingDBs = array();
-		if ( $map === null || $mapTimestamp < microtime( true ) - 0.5 ) {
+		if ( $cacheTimestamp < microtime( true ) - 1.0 ) {
 			$conn = false;
 			// Connect to the first working server on the list
+			// @TODO: periodically merge the fallback server maps to the active one
 			foreach ( $this->aggrSrvs as $server ) {
 				$conn = $this->getRedisConn( $server );
 				if ( $conn ) {
@@ -594,6 +594,7 @@ class RedisJobRunnerService {
 					if ( $map === false ) {
 						return $pendingDBs;
 					}
+					$cacheTimestamp = microtime( true );
 
 					$wikiIds = array();
 					$pendingDBs = array(); // (type => list of wikis)
