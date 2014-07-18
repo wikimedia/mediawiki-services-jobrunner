@@ -366,9 +366,11 @@ class RedisJobRunnerService {
 				$maxReal = isset( $this->maxReal[$procSlot['type']] )
 					? $this->maxRealMap[$procSlot['type']]
 					: $this->maxRealMap['*'];
-				if ( ( time() - $procSlot['stime'] ) >= $maxReal ) {
+				$age = time() - $procSlot['stime'];
+				if ( $age >= $maxReal ) {
 					$cmd = $procSlot['cmd'];
-					$this->error( "Runner loop $id process in slot $slot timed out:\n$cmd." );
+					$this->error(
+						"Runner loop $id process in slot $slot timed out [{$age}s; max: {$maxReal}s]:\n$cmd." );
 					$this->closeRunner( $id, $slot, $procSlot, SIGKILL );
 					$this->incrStats( 'runner-status.timeout', 1 );
 				} else {
