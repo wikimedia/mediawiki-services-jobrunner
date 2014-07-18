@@ -390,6 +390,9 @@ class RedisJobRunnerService {
 			} elseif ( $status && !$status['running'] ) {
 				if ( $status['exitcode'] != 0 ) {
 					$error = stream_get_contents( $procSlot['pipes'][2] );
+					if ( $error == '' ) {
+						$error = stream_get_contents( $procSlot['pipes'][1] );
+					}
 					$this->error( "Runner loop $id process in slot $slot " .
 						"gave status '{$status['exitcode']}':\n\t$error." );
 					$this->incrStats( 'runner-status.error', 1 );
