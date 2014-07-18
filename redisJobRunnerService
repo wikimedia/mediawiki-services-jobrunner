@@ -5,6 +5,10 @@ if ( PHP_SAPI !== 'cli' ) {
 	die( "This is not a valid entry point.\n" );
 }
 
+if ( !function_exists( 'posix_kill' ) ) {
+	function posix_kill() {} // no-op on Windows; procs killed with proc_terminate()
+}
+
 error_reporting( E_ALL );
 
 // Run the server...
@@ -226,11 +230,12 @@ class RedisJobRunnerService {
 		foreach ( $this->loopMap as $id => $info ) {
 			for ( $i=0; $i < $info['runners']; ++$i ) {
 				$procMap[$id][$i] = array(
-					'handle' => false,
-					'pipes'  => array(),
-					'type'   => null,
-					'cmd'    => null,
-					'stime'  => 0
+					'handle'  => false,
+					'pipes'   => array(),
+					'type'    => null,
+					'cmd'     => null,
+					'stime'   => 0,
+					'sigtime' => 0
 				);
 				$prioMap[$id] = array( 'high' => true, 'since' => time() );
 			}
@@ -358,6 +363,7 @@ class RedisJobRunnerService {
 	protected function refillSlots( $id, array &$procSlots, array $prioMap, array $pending ) {
 		$free = 0;
 		$new = 0;
+		$cTime = time();
 		foreach ( $procSlots as $slot => &$procSlot ) {
 			$status = $procSlot['handle']
 				? proc_get_status( $procSlot['handle'] )
@@ -366,13 +372,18 @@ class RedisJobRunnerService {
 				$maxReal = isset( $this->maxReal[$procSlot['type']] )
 					? $this->maxRealMap[$procSlot['type']]
 					: $this->maxRealMap['*'];
-				$age = time() - $procSlot['stime'];
-				if ( $age >= $maxReal ) {
+				$age = $cTime - $procSlot['stime'];
+				if ( $age >= $maxReal && !$procSlot['sigtime'] ) {
 					$cmd = $procSlot['cmd'];
-					$this->error(
-						"Runner loop $id process in slot $slot timed out [{$age}s; max: {$maxReal}s]:\n$cmd." );
-					$this->closeRunner( $id, $slot, $procSlot, SIGKILL );
+					$this->error( "Runner loop $id process in slot $slot timed out " .
+						"[{$age}s; max: {$maxReal}s]:\n$cmd." );
+					posix_kill( $status['pid'], SIGTERM ); // non-blocking
+					$procSlot['sigtime'] = time();
 					$this->incrStats( 'runner-status.timeout', 1 );
+				} elseif ( $age >= $maxReal && ( $cTime - $procSlot['sigtime'] ) > 5 ) {
+					$this->error( "Runner loop $id process in slot $slot sent SIGKILL." );
+					$this->closeRunner( $id, $slot, $procSlot, SIGKILL );
+					$this->incrStats( 'runner-status.kill', 1 );
 				} else {
 					continue; // slot is busy
 				}
@@ -498,6 +509,7 @@ class RedisJobRunnerService {
 		$procSlot['type'] = $type;
 		$procSlot['cmd'] = $cmd;
 		$procSlot['stime'] = time();
+		$procSlot['sigtime'] = 0;
 
 		if ( $procSlot['handle'] ) {
 			return true;
@@ -538,6 +550,7 @@ class RedisJobRunnerService {
 		$procSlot['handle'] = false;
 		$procSlot['type'] = null;
 		$procSlot['stime'] = 0;
+		$procSlot['sigtime'] = 0;
 		$procSlot['cmd'] = null;
 	}
 
