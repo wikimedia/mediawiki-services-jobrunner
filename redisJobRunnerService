@@ -335,6 +335,7 @@ class RedisJobRunnerService {
 					$this->debug( "Done checking loop $id." );
 				}
 			}
+			unset( $procSlots );
 			$this->incrStats( "spawn.$host", $anyNew );
 			$this->incrStats( "prioritychange.$host", $prioSwitches );
 			// Backoff if there is nothing to do
