@@ -369,7 +369,7 @@ class RedisJobRunnerService {
 				? proc_get_status( $procSlot['handle'] )
 				: false;
 			if ( $status && $status['running'] ) {
-				$maxReal = isset( $this->maxReal[$procSlot['type']] )
+				$maxReal = isset( $this->maxRealMap[$procSlot['type']] )
 					? $this->maxRealMap[$procSlot['type']]
 					: $this->maxRealMap['*'];
 				$age = $cTime - $procSlot['stime'];
