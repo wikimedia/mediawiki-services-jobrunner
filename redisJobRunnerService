@@ -376,7 +376,7 @@ class RedisJobRunnerService {
 				if ( $age >= $maxReal && !$procSlot['sigtime'] ) {
 					$cmd = $procSlot['cmd'];
 					$this->error( "Runner loop $id process in slot $slot timed out " .
-						"[{$age}s; max: {$maxReal}s]:\n$cmd." );
+						"[{$age}s; max: {$maxReal}s]:\n$cmd" );
 					posix_kill( $status['pid'], SIGTERM ); // non-blocking
 					$procSlot['sigtime'] = time();
 					$this->incrStats( 'runner-status.timeout', 1 );
