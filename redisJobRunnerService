@@ -53,9 +53,9 @@ class RedisJobRunnerService {
 	 */
 	protected $hpMaxTime = 30;
 
-	/** @var Array List of IP:<port> entries */
+	/** @var array List of IP:<port> entries */
 	protected $queueSrvs = array();
-	/** @var Array List of IP:<port> entries */
+	/** @var array List of IP:<port> entries */
 	protected $aggrSrvs = array();
 	/** @var string Redis password */
 	protected $password;
@@ -64,24 +64,24 @@ class RedisJobRunnerService {
 	protected $verbose;
 	/** @var string MediaWiki script wrapper */
 	protected $wrapper;
-	/** @var Map of (id => (job type list,count) */
+	/** @var array Map of (id => (job type list,count) */
 	protected $loopMap = array();
-	/** @var Map of (job type => integer seconds) */
+	/** @var array Map of (job type => integer seconds) */
 	protected $claimTTLMap = array();
-	/** @var Map of (job type => integer) */
+	/** @var array Map of (job type => integer) */
 	protected $attemptsMap = array();
-	/** @var Map of (job type => integer) */
+	/** @var array Map of (job type => integer) */
 	protected $maxRealMap = array();
-	/** @var Map of (job type => integer) */
+	/** @var array Map of (job type => integer) */
 	protected $maxMemMap = array();
-	/** @var String IP address or hostname */
+	/** @var string IP address or hostname */
 	protected $statsdHost;
 	/** @var integer Port number */
 	protected $statsdPort;
 
-	/** @var Map of (server => Redis object) */
+	/** @var array Map of (server => Redis object) */
 	protected $conns = array();
-	/** @var Map of (server => timestamp) */
+	/** @var array Map of (server => timestamp) */
 	protected $downSrvs = array();
 
 	/** @var RedisJobRunnerService */
@@ -246,8 +246,8 @@ class RedisJobRunnerService {
 		// Setup signal handlers
 		$handlerFunc = function( $signo ) use ( &$procMap ) {
 			print "Caught signal ($signo)\n";
-			foreach ( $procMap as $id => &$procSlots ) {
-				foreach ( $procSlots as $slot => &$procSlot ) {
+			foreach ( $procMap as &$procSlots ) {
+				foreach ( $procSlots as &$procSlot ) {
 					if ( !$procSlot['handle'] ) {
 						continue;
 					}
@@ -280,7 +280,6 @@ class RedisJobRunnerService {
 			$prioSwitches = 0;
 			$anyNew = 0;
 			$anyFree = 0;
-			$found = false;
 			// Do periodic queue tasks on all queues every 5 minutes
 			$count = $this->executeReadyPeriodicTasks();
 			if ( is_int( $count ) ) {
