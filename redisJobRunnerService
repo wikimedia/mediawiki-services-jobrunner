@@ -595,6 +595,7 @@ class RedisJobRunnerService {
 					if ( $map === false ) {
 						return $pendingDBs;
 					}
+					unset( $map['_epoch'] );
 					$cacheTimestamp = microtime( true );
 
 					$wikiIds = array();
@@ -799,21 +800,21 @@ LUA;
 	 * @return string (per JobQueueAggregatorRedis.php)
 	 */
 	private function getReadyQueueKey() {
-		return "jobqueue:aggregator:h-ready-queues:v1"; // global
+		return "jobqueue:aggregator:h-ready-queues:v2"; // global
 	}
 
 	/**
 	 * @return string (per JobQueueAggregatorRedis.php)
 	 */
 	private function getQueueTypesKey() {
-		return "jobqueue:aggregator:h-queue-types:v1"; // global
+		return "jobqueue:aggregator:h-queue-types:v2"; // global
 	}
 
 	/**
 	 * @return string
 	 */
 	private function getWikiSetKey() {
-		return "jobqueue:aggregator:s-wikis:v1"; // global
+		return "jobqueue:aggregator:s-wikis:v2"; // global
 	}
 
 	/**
@@ -885,7 +886,7 @@ LUA;
 
 		if ( $conn ) {
 			$conn->setOption( Redis::OPT_READ_TIMEOUT, 5 );
-			$conn->setOption( Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP );
+			$conn->setOption( Redis::OPT_SERIALIZER, Redis::SERIALIZER_NONE );
 			$this->conns[$server] = $conn;
 
 			return $conn;
