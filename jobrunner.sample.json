@@ -1,0 +1,100 @@
+// Configuration file for MediaWiki Jobrunner
+// This file is managed by Puppet
+
+{
+	"groups": {
+		"basic": {
+			"runners": 19,
+			"include": [
+				"*"
+			],
+			"exclude": [
+				"AssembleUploadChunks",
+				"ParsoidCacheUpdateJobOnDependencyChange",
+				"ParsoidCacheUpdateJobOnEdit",
+				"PublishStashedFile",
+				"gwtoolsetGWTFileBackendCleanupJob",
+				"gwtoolsetUploadMediafileJob",
+				"gwtoolsetUploadMetadataJob",
+				"uploadFromUrl",
+				"webVideoTranscode"
+			],
+			"low-priority": [
+				"cirrusSearchLinksUpdate",
+				"htmlCacheUpdate",
+				"refreshLinks"
+			]
+		},
+		"gwt": {
+			"runners": 1,
+			"include": [
+				"gwtoolsetUploadMetadataJob",
+				"gwtoolsetUploadMediafileJob",
+				"gwtoolsetGWTFileBackendCleanupJob"
+			]
+		},
+		"parsoid": {
+			"runners": 20,
+			"include": [
+				"ParsoidCacheUpdateJobOnEdit"
+			],
+			"low-priority": [
+				"ParsoidCacheUpdateJobOnDependencyChange"
+			]
+		},
+		"transcode": {
+			"runners": 0,
+			"include": [
+				"webVideoTranscode"
+			]
+		},
+		"upload": {
+			"runners": 7,
+			"include": [
+				"AssembleUploadChunks",
+				"PublishStashedFile",
+				"uploadFromUrl"
+			]
+		}
+	},
+
+	"limits": {
+		// How many times to let jobs be recycled before abandoning
+		"attempts": {
+			"*": 3
+		},
+		// How long jobs can be claimed before being recycled
+		"claimTTL": {
+			"*": 3600,
+			"webVideoTranscode": 86400
+		},
+		// runJobs.php process time limits
+		"real": {
+			"*": 300,
+			"webVideoTranscode": 86400
+		},
+		// runJobs.php memory limits
+		"memory": {
+			"*": "300M"
+		}
+	},
+
+	"redis": {
+		// Ready queue trackers
+		"aggregators": [
+			"rdb1001.eqiad.wmnet",
+			"rdb1003.eqiad.wmnet"
+		],
+		// Main queue servers
+		"queues": [
+			"rdb1001.eqiad.wmnet",
+			"rdb1003.eqiad.wmnet"
+		],
+		"password": "XXXXX"
+	},
+
+	"statsd": "statsd.eqiad.wmnet:8125",
+
+	// HET deploy wrapper
+	"wrapper": "php /usr/local/apache/common/multiversion/MWScript.php"
+}

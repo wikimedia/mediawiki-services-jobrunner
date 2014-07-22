@@ -9,18 +9,14 @@ if ( !function_exists( 'posix_kill' ) ) {
 	function posix_kill() {} // no-op on Windows; procs killed with proc_terminate()
 }
 
-error_reporting( E_ALL );
+error_reporting( E_ALL | E_STRICT );
+ini_set( 'display_errors', 1 );
 
 // Run the server...
 set_time_limit( 0 );
 ini_set( 'memory_limit', '256M' );
 RedisJobRunnerService::init(
-	getopt( '', array(
-		'aggrSrvs:', 'queueSrvs:', 'runners:',
-		'config-file::', 'wrapper::', 'claimTTL::', 'attempts::', 'maxReal::', 'maxMem::',
-		'statsdAddr::',
-		'verbose', 'help'
-	) )
+	getopt( '', array( 'config-file::', 'help', 'verbose' ) )
 )->main();
 
 class RedisJobRunnerService {
@@ -91,42 +87,36 @@ class RedisJobRunnerService {
 	protected static $instance;
 
 	/**
-	 * @param array $config
+	 * @param array $args
 	 * @return RedisJobRunnerService
 	 * @throws Exception
 	 */
-	public static function init( array $config ) {
+	public static function init( array $args ) {
 		if ( self::$instance ) {
 			throw new Exception( 'RedisJobRunnerService already initialized.' );
 		}
 
-		if ( isset( $config['config-file'] ) ) {
-			$iniConfig = parse_ini_file( $config['config-file'] );
-			if ( is_array( $iniConfig ) ) {
-				$config += $iniConfig; // params take precedence
-			} else {
-				throw new Exception( "Could not parse file at '{$config['config-file']}'." );
-			}
+		if ( !isset( $args['config-file'] ) || isset( $args['help'] ) ) {
+			die( "Usage: php RedisJobRunnerService.php\n"
+				. "--config-file=<path>\n"
+				. "--help\n"
+			);
 		}
+		$file = $args['config-file'];
 
-		foreach ( array( 'aggrSrvs', 'queueSrvs', 'runners' ) as $par ) {
-			if ( !isset( $config[$par] ) || isset( $config['help'] ) ) {
-				die( "Usage: php RedisJobRunnerService.php\n" .
-					"--config-file=<path>\n" .
-					"--aggrSrvs=<address>[,address]...\n" .
-					"--queueSrvs=<address>[,address]...>\n" .
-					"--runners=<count>:<type>[,type]...[|<count>:<type>[,type]...]...\n" .
-					"--wrapper=<script wrapper>" .
-					"--claimTTL=<type>:<seconds>[,<type>:<seconds>]...\n" .
-					"--attempts=<type>:<integer>[,<type>:<integer>]...\n" .
-					"--maxReal=<type>:<integer>[,<type>:<integer>]...\n" .
-					"--maxMem=<type>:<integer>[,<type>:<integer>(B|M)]...\n" .
-					"--statsdAddr=<address>\n"
-				);
-			}
+		$content = file_get_contents( $file );
+		if ( !$content ) {
+			throw new Exception( "Coudn't open configuration file '{$file}''" );
+		}
+		// Remove comments
+		$content = trim( preg_replace( '/\/\/.*$/m', '',  $content ) );
+		$config = json_decode( $content, true );
+		if ( !is_array( $config ) ) {
+			throw new Exception( "Could not parse JSON file '{$file}'." );
 		}
 
 		self::$instance = new self( $config );
+		self::$instance->verbose = isset( $args['verbose'] );
 		return self::$instance;
 	}
 
@@ -134,94 +124,95 @@ class RedisJobRunnerService {
 	 * @param array $config
 	 */
 	protected function __construct( array $config ) {
-		$this->aggrSrvs = explode( ',', $config['aggrSrvs'] );
+		$this->aggrSrvs = $config['redis']['aggregators'];
 		if ( !count( $this->aggrSrvs ) ) {
-			throw new Exception( "Empty list for 'aggrSrvs'." );
+			throw new Exception( "Empty list for 'redis.aggregators'." );
 		}
-		$this->queueSrvs = explode( ',', $config['queueSrvs'] );
+		$this->queueSrvs = $config['redis']['queues'];
 		if ( !count( $this->queueSrvs ) ) {
-			throw new Exception( "Empty list for 'queueSrvs'." );
+			throw new Exception( "Empty list for 'redis.queues'." );
 		}
 
-		foreach ( explode( '&', $config['runners'] ) as $loop ) {
-			list( $runners, $types ) = explode( ':', trim( $loop ) );
-			if ( !preg_match( '/^\d+$/', $runners ) ) {
+		foreach ( $config['groups'] as $group ) {
+			$runners = $group['runners'];
+			if ( !is_int( $runners ) ) {
 				throw new Exception( "Invalid number of job runners '$runners'." );
 			} elseif ( $runners == 0 ) {
 				continue; // loop disabled
 			}
-			$types = explode( ',', $types );
+
+			$types = $group['include'];
+			if ( isset( $group['exclude']) ) {
+				foreach ( $group['exclude'] as $job ) {
+					$types[] = "-$job";
+				}
+			}
+			if ( isset( $group['low-priority'] ) ) {
+				foreach ( $group['low-priority'] as $job ) {
+					$types[] = "~$job";
+				}
+			}
 			foreach ( $types as $type ) {
-				$type = trim( $type );
 				if ( !preg_match( '/^[-~]?[a-zA-Z0-9]+|\*$/', $type ) ) {
 					throw new Exception( "Invalid job type '$type'." );
 				}
 			}
-			$this->loopMap[] = array( 'types' => $types, 'runners' => (int)$runners );
+			$this->loopMap[] = array( 'types' => $types, 'runners' => $runners );
 		}
 
-		if ( isset( $config['timeout'] ) ) {
-			$this->maxProcReal = (int)$config['timeout'];
-		}
 		if ( isset( $config['wrapper'] ) ) {
 			$this->wrapper = $config['wrapper'];
 		}
-		if ( isset( $config['password'] ) ) {
-			$this->password = $config['password'];
+		if ( isset( $config['redis']['password'] ) ) {
+			$this->password = $config['redis']['password'];
 		}
-		$this->claimTTLMap['*'] = 3600; // default
-		if ( isset( $config['claimTTL'] ) ) {
-			$tuples = explode( ',', $config['claimTTL'] );
-			foreach ( $tuples as $tuple ) {
-				list( $type, $value ) = explode( ':', trim( $tuple ) );
-				if ( $value < 30 ) {
-					throw new Exception( "Invalid claim TTL '$value'." );
-				}
-				$this->claimTTLMap[$type] = (int)$value;
-			}
+
+		if ( isset( $config['limits']['claimTTL'] ) ) {
+			$this->claimTTLMap = $config['limits']['claimTTL'];
 		}
-		$this->attemptsMap['*'] = 3; // default
-		if ( isset( $config['attempts'] ) ) {
-			$tuples = explode( ',', $config['attempts'] );
-			foreach ( $tuples as $tuple ) {
-				list( $type, $value ) = explode( ':', trim( $tuple ) );
-				if ( $value < 1 ) {
-					throw new Exception( "Invalid max attempts '$value'." );
-				}
-				$this->attemptsMap[$type] = (int)$value;
-			}
+		if ( !isset( $this->claimTTLMap['*'] ) ) {
+			$this->claimTTLMap['*'] = 3600;
 		}
+
+		if ( isset( $config['limits']['attempts'] ) ) {
+			$this->attemptsMap = $config['limits']['attempts'];
+		}
+		if ( !isset( $this->attemptsMap['*'] ) ) {
+			$this->attemptsMap['*'] = 3;
+		}
+
 		// Avoid killing processes before they get a fair chance to exit
 		$minRealTime = 2 * max( $this->lpMaxTime, $this->hpMaxTime );
-		$this->maxRealMap['*'] = 3600; // default
-		if ( isset( $config['maxReal'] ) ) {
-			$tuples = explode( ',', $config['maxReal'] );
-			foreach ( $tuples as $tuple ) {
-				list( $type, $value ) = explode( ':', trim( $tuple ) );
+		if ( isset( $config['limits']['real'] ) ) {
+			foreach ( $config['limits']['real'] as $type => $value ) {
 				$this->maxRealMap[$type] = max( (int)$value, $minRealTime );
 			}
 		}
-		$this->maxMemMap['*'] = '300M'; // default
-		if ( isset( $config['maxMem'] ) ) {
-			$tuples = explode( ',', $config['maxMem'] );
-			foreach ( $tuples as $tuple ) {
-				list( $type, $value ) = explode( ':', trim( $tuple ) );
-				$this->maxMemMap[$type] = $value;
-			}
+		if ( !isset( $this->maxRealMap['*'] ) ) {
+			$this->maxRealMap['*'] = 3600;
 		}
+
+		if ( isset( $config['limits']['memory'] ) ) {
+			$this->maxMemMap = $config['limits']['memory'];
+		}
+
 		if ( isset( $config['dispatcher'] ) ) {
 			$this->dispatcher = $config['dispatcher'];
 		}
-		if ( isset( $config['statsdAddr'] ) ) {
+
+		if ( !isset( $this->maxMemMap['*'] ) ) {
+			$this->maxMemMap['*'] = '300M';
+		}
+
+		if ( isset( $config['statsd'] ) ) {
 			$m = array();
-			if ( preg_match( '/^(.+):(\d+)$/', $config['statsdAddr'], $m ) ) {
+			if ( preg_match( '/^(.+):(\d+)$/', $config['statsd'], $m ) ) {
 				$this->statsdHost = $m[1];
 				$this->statsdPort = (int)$m[2];
 			} else {
-				throw new Exception( "Invalid profiler address '{$config['statsdAddr']}'." );
+				throw new Exception( "Invalid profiler address '{$config['statsd']}'." );
 			}
 		}
-		$this->verbose = isset( $config['verbose'] );
 	}
 
 	/**
