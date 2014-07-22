@@ -610,7 +610,7 @@ class RedisJobRunnerService {
 						$this->redisCmd( $conn, 'sAdd', $params );
 					}
 				} catch ( RedisException $e ) {
-					unset( $this->conns[$server] );
+					$this->handleRedisError( $e, $server );
 				}
 			}
 		}
@@ -776,14 +776,14 @@ LUA;
 					}
 				} catch ( RedisException $e ) {
 					$ok = false;
-					unset( $this->conns[$qServer] );
+					$this->handleRedisError( $e, $qServer );
 				}
 
 				$this->redisCmd( $aConn, 'hMSet', array( $this->getReadyQueueKey(), $mapSet ) );
 			}
 		} catch ( RedisException $e ) {
 			$ok = false;
-			unset( $this->conns[$aServer] );
+			$this->handleRedisError( $e, $aServer );
 		}
 
 		if ( !$ok ) {
@@ -894,6 +894,16 @@ LUA;
 	}
 
 	/**
+	 * @param RedisException $e
+	 * @param string $server
+	 */
+	protected function handleRedisError( RedisException $e, $server ) {
+		unset( $this->conns[$server] );
+		$this->error( "Redis error: " . $e->getMessage() );
+		$this->incrStats( "redis-error." . gethostname(), 1 );
+	}
+
+	/**
 	 * @param Redis $conn
 	 * @param string $cmd
 	 * @param array $args
@@ -903,8 +913,6 @@ LUA;
 		$conn->clearLastError();
 		$res = call_user_func_array( array( $conn, $cmd ), $args );
 		if ( $conn->getLastError() ) {
-			$this->error( "Redis error: " . $conn->getLastError() );
-			$this->incrStats( "redis-error." . gethostname(), 1 );
 			// Make all errors be exceptions instead of "most but not all".
 			// This will let the caller know to reset the connection to be safe.
 			throw new RedisException( $conn->getLastError() );
