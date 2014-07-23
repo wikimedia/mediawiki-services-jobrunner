@@ -341,9 +341,11 @@ class RedisJobRunnerService {
 			// Backoff if there is nothing to do
 			if ( !$anyFree ) {
 				$this->debug( "All runner loops full." );
+				$this->incrStats( "all-full.$host", 1 );
 				usleep( 100000 );
 			} elseif ( !$anyNew ) {
 				$this->debug( "Loops have free slots, but there are no appropriate jobs." );
+				$this->incrStats( "some-full.$host", 1 );
 				usleep( 100000 );
 			}
 			// Track memory usage
