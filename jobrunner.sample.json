@@ -95,6 +95,5 @@
 
 	"statsd": "statsd.eqiad.wmnet:8125",
 
-	// HET deploy wrapper
-	"wrapper": "php /usr/local/apache/common/multiversion/MWScript.php"
+	"dispatcher": "php /usr/local/apache/common/multiversion/MWScript.php runJobs.php --wiki=%(db)x --type=%(type)x --maxtime=%(maxtime)x --memory-limit=%(maxmem)x --result=json"
 }
