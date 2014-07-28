@@ -810,7 +810,7 @@ class JobRunnerPipeline {
 				}
 				if ( $status['exitcode'] == 0 ) {
 					// If this finished early, lay off of the queue for a while
-					if ( ( $cTime - $procSlot['stime'] ) < $this->hpMaxTime/2 ) {
+					if ( ( $cTime - $procSlot['stime'] ) < $this->srvc->hpMaxTime/2 ) {
 						unset( $pending[$procSlot['type']][$procSlot['db']] );
 						$this->srvc->debug( "Queue '{$procSlot['db']}/{$procSlot['type']}' emptied." );
 					}
