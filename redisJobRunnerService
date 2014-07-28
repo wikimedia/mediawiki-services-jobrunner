@@ -952,7 +952,7 @@ class JobRunnerPipeline {
 		$procSlot['cmd'] = $cmd;
 		$procSlot['stime'] = time();
 		$procSlot['sigtime'] = 0;
-		$procSlot['isCurl'] = true;
+		$procSlot['isCurl'] = $isCurl;
 
 		if ( $procSlot['handle'] ) {
 			return true;
