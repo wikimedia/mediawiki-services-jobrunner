@@ -3,6 +3,8 @@
 
 if ( PHP_SAPI !== 'cli' ) {
 	die( "This is not a valid entry point.\n" );
+} elseif ( !class_exists( 'Redis' ) ) {
+	die( "The phpredis is not installed; aborting.\n" );
 }
 
 if ( !function_exists( 'posix_kill' ) ) {
@@ -102,13 +104,14 @@ class RedisJobRunnerService {
 				. "--help\n"
 			);
 		}
-		$file = $args['config-file'];
 
+		$file = $args['config-file'];
 		$content = file_get_contents( $file );
-		if ( !$content ) {
+		if ( $content === false ) {
 			throw new Exception( "Coudn't open configuration file '{$file}''" );
 		}
-		// Remove comments
+
+		// Remove comments and load into an array
 		$content = trim( preg_replace( '/\/\/.*$/m', '',  $content ) );
 		$config = json_decode( $content, true );
 		if ( !is_array( $config ) ) {
@@ -117,6 +120,7 @@ class RedisJobRunnerService {
 
 		self::$instance = new self( $config );
 		self::$instance->verbose = isset( $args['verbose'] );
+
 		return self::$instance;
 	}
 
@@ -167,41 +171,32 @@ class RedisJobRunnerService {
 			$this->password = $config['redis']['password'];
 		}
 
+		$this->claimTTLMap['*'] = 3600;
 		if ( isset( $config['limits']['claimTTL'] ) ) {
-			$this->claimTTLMap = $config['limits']['claimTTL'];
-		}
-		if ( !isset( $this->claimTTLMap['*'] ) ) {
-			$this->claimTTLMap['*'] = 3600;
+			$this->claimTTLMap = $config['limits']['claimTTL'] + $this->claimTTLMap;
 		}
 
+		$this->attemptsMap['*'] = 3;
 		if ( isset( $config['limits']['attempts'] ) ) {
-			$this->attemptsMap = $config['limits']['attempts'];
-		}
-		if ( !isset( $this->attemptsMap['*'] ) ) {
-			$this->attemptsMap['*'] = 3;
+			$this->attemptsMap = $config['limits']['attempts'] + $this->attemptsMap;
 		}
 
 		// Avoid killing processes before they get a fair chance to exit
+		$this->maxRealMap['*'] = 3600;
 		$minRealTime = 2 * max( $this->lpMaxTime, $this->hpMaxTime );
 		if ( isset( $config['limits']['real'] ) ) {
 			foreach ( $config['limits']['real'] as $type => $value ) {
 				$this->maxRealMap[$type] = max( (int)$value, $minRealTime );
 			}
 		}
-		if ( !isset( $this->maxRealMap['*'] ) ) {
-			$this->maxRealMap['*'] = 3600;
-		}
 
+		$this->maxMemMap['*'] = '300M';
 		if ( isset( $config['limits']['memory'] ) ) {
-			$this->maxMemMap = $config['limits']['memory'];
+			$this->maxMemMap = $config['limits']['memory'] + $this->maxMemMap;
 		}
 
 		if ( isset( $config['dispatcher'] ) ) {
 			$this->dispatcher = $config['dispatcher'];
-		}
-
-		if ( !isset( $this->maxMemMap['*'] ) ) {
-			$this->maxMemMap['*'] = '300M';
 		}
 
 		if ( isset( $config['statsd'] ) ) {
