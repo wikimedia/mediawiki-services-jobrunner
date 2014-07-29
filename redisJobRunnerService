@@ -228,13 +228,13 @@ class RedisJobRunnerService {
 		}
 
 		// Setup signal handlers
-		$handlerFunc = function( $signo ) use ( $pipeline ) {
-			print "Caught signal ($signo)\n";
-			$pipeline->terminateSlots();
-			exit( 128 + $signo );
-		};
 		$useSignals = function_exists( 'pcntl_signal' );
 		if ( $useSignals ) {
+			$handlerFunc = function( $signo ) use ( $pipeline ) {
+				print "Caught signal ($signo)\n";
+				$pipeline->terminateSlots();
+				exit( 128 + $signo );
+			};
 			$ok = pcntl_signal( SIGHUP, $handlerFunc )
 				&& pcntl_signal( SIGINT, $handlerFunc )
 				&& pcntl_signal( SIGTERM, $handlerFunc );
