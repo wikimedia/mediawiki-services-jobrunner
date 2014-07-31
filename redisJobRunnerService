@@ -220,7 +220,7 @@ class RedisJobRunnerService {
 		foreach ( $this->loopMap as $loop => $info ) {
 			for ( $i=0; $i < $info['runners']; ++$i ) {
 				$pipeline->initSlot( $loop, $i );
-				$prioMap[$loop] = array( 'high' => true, 'since' => time() );
+				$prioMap[$loop] = array( 'high' => (bool)mt_rand( 0, 1 ), 'since' => time() );
 			}
 			$this->notice( "Initialized loop $loop with {$info['runners']} runner(s)." );
 		}
