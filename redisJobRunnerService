@@ -800,7 +800,7 @@ class JobRunnerPipeline {
 				}
 			} elseif ( $status && !$status['running'] ) {
 				$response = stream_get_contents( $procSlot['pipes'][1] );
-				$result = json_decode( $response ); // an array if no exceptions happened
+				$result = json_decode( trim( $response ) ); // an array if no exceptions happened
 				if ( $status['exitcode'] == 0 && is_array( $result ) ) {
 					// If this finished early, lay off of the queue for a while
 					if ( ( $cTime - $procSlot['stime'] ) < $this->srvc->hpMaxTime/2 ) {
