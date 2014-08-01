@@ -40,7 +40,7 @@ class RedisJobRunnerService {
 	/** @var array Map of (job type => integer) */
 	protected $attemptsMap = array();
 
-	/** @var array Map of (id => (job type list,count) */
+	/** @var array Map of (id => (include,exclude,low-priority,count) */
 	public $loopMap = array();
 	/** @var array Map of (job type => integer) */
 	public $maxRealMap = array();
@@ -139,31 +139,21 @@ class RedisJobRunnerService {
 			throw new Exception( "No command provided for 'dispatcher'." );
 		}
 
-		foreach ( $config['groups'] as $group ) {
-			$runners = $group['runners'];
-			if ( !is_int( $runners ) ) {
-				throw new Exception( "Invalid number of job runners '$runners'." );
-			} elseif ( $runners == 0 ) {
+		foreach ( $config['groups'] as $name => $group ) {
+			if ( !is_int( $group['runners'] ) ) {
+				throw new Exception( "Invalid 'runners' value for runner group '$name'." );
+			} elseif ( $group['runners'] == 0 ) {
 				continue; // loop disabled
 			}
 
-			$types = $group['include'];
-			if ( isset( $group['exclude']) ) {
-				foreach ( $group['exclude'] as $job ) {
-					$types[] = "-$job";
+			foreach ( array( 'include', 'exclude', 'low-priority' ) as $k ) {
+				if ( !isset( $group[$k] ) ) {
+					$group[$k] = array();
+				} elseif ( !is_array( $group[$k] ) ) {
+					throw new Exception( "Invalid '$k' value for runner group '$name'." );
 				}
 			}
-			if ( isset( $group['low-priority'] ) ) {
-				foreach ( $group['low-priority'] as $job ) {
-					$types[] = "~$job";
-				}
-			}
-			foreach ( $types as $type ) {
-				if ( !preg_match( '/^[-~]?[a-zA-Z0-9]+|\*$/', $type ) ) {
-					throw new Exception( "Invalid job type '$type'." );
-				}
-			}
-			$this->loopMap[] = array( 'types' => $types, 'runners' => $runners );
+			$this->loopMap[] = $group;
 		}
 
 		if ( isset( $config['wrapper'] ) ) {
@@ -851,29 +841,18 @@ class JobRunnerPipeline {
 	 * @return array|boolean
 	 */
 	protected function selectQueue( $loop, array $prioMap, array $pending ) {
-		$include = array();
-		$exclude = array();
-		foreach ( $this->srvc->loopMap[$loop]['types'] as $type ) {
-			// "*" means "all current queues"
-			if ( $type === '*' ) {
-				$include = array_merge( $include, array_keys( $pending ) );
-			// "-" as a prefix means "exclude this queue" from "*"
-			} elseif ( $type[0] === '-' ) {
-				$exclude[] = substr( $type, 1 );
-			// "~" as a prefix means "low priority"
-			} elseif ( $type[0] === '~' ) {
-				if ( $prioMap[$loop]['high'] ) {
-					// In high priority mode, exclude this type
-					$exclude[] = substr( $type, 1 );
-				} else {
-					// In low priority mode, allow this type
-					$include[] = substr( $type, 1 );
-				}
-			} else {
-				$include[] = $type;
-			}
+		$include = $this->srvc->loopMap[$loop]['include'];
+		$exclude = $this->srvc->loopMap[$loop]['exclude'];
+		if ( $prioMap[$loop]['high'] ) {
+			$exclude = array_merge( $exclude, $this->srvc->loopMap[$loop]['low-priority'] );
+		} else {
+			$include = array_merge( $include, $this->srvc->loopMap[$loop]['low-priority'] );
 		}
-		$candidateTypes = array_diff( $include, $exclude );
+		if ( in_array( '*', $include ) ) {
+			$include = array_merge( $include, array_keys( $pending ) );
+		}
+
+		$candidateTypes = array_diff( array_unique( $include ), $exclude, array( '*' ) );
 
 		$candidates = array(); // list of (type, db)
 		// Flatten the tree of candidates into a flat list so that a random
