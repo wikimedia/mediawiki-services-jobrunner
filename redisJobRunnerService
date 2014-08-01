@@ -799,9 +799,9 @@ class JobRunnerPipeline {
 					continue; // slot is busy
 				}
 			} elseif ( $status && !$status['running'] ) {
-				$response = stream_get_contents( $procSlot['pipes'][1] );
+				$response = trim( stream_get_contents( $procSlot['pipes'][1] ) );
 				// $result will be an array if no exceptions happened
-				$result = json_decode( trim( $response ), true );
+				$result = json_decode( $response, true );
 				if ( $status['exitcode'] == 0 && is_array( $result ) ) {
 					// If this finished early, lay off of the queue for a while
 					if ( ( $cTime - $procSlot['stime'] ) < $this->srvc->hpMaxTime/2 ) {
@@ -818,7 +818,7 @@ class JobRunnerPipeline {
 				} else {
 					// Mention any serious errors that may have occured
 					$cmd = $procSlot['cmd'];
-					$error = stream_get_contents( $procSlot['pipes'][2] ) ?: $response;
+					$error = trim( stream_get_contents( $procSlot['pipes'][2] ) ) ?: $response;
 					$this->srvc->error( "Runner loop $loop process in slot $slot " .
 						"gave status '{$status['exitcode']}':\n$cmd\n\t$error" );
 					$this->srvc->incrStats( 'runner-status.error', 1 );
