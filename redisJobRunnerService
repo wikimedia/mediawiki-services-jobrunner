@@ -252,7 +252,7 @@ class RedisJobRunnerService {
 			if ( !count( $pending ) ) {
 				$this->notice( "No jobs available..." );
 				$this->incrStats( "idle.$host", 1 );
-				sleep( 5 ); // no jobs
+				usleep( 100000 ); // no jobs
 				continue;
 			}
 			// Spawn new runners as slots become available
