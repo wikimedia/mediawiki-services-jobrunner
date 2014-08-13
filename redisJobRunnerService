@@ -910,12 +910,14 @@ class JobRunnerPipeline {
 
 		// Start the runner in the background
 		$procSlot['handle'] = proc_open( $cmd, $descriptors, $procSlot['pipes'] );
-		// Set a timeout so stream_get_contents() won't block for sanity
-		stream_set_timeout( $procSlot['pipes'][1], 5 );
-		stream_set_timeout( $procSlot['pipes'][2], 5 );
-		// Close the unused STDIN pipe
-		fclose( $procSlot['pipes'][0] );
-		unset( $procSlot['pipes'][0] ); // unused
+		if ( $procSlot['handle'] ) {
+			// Set a timeout so stream_get_contents() won't block for sanity
+			stream_set_timeout( $procSlot['pipes'][1], 5 );
+			stream_set_timeout( $procSlot['pipes'][2], 5 );
+			// Close the unused STDIN pipe
+			fclose( $procSlot['pipes'][0] );
+			unset( $procSlot['pipes'][0] ); // unused
+		}
 
 		$procSlot['db'] = $db;
 		$procSlot['type'] = $type;
