@@ -95,5 +95,5 @@
 
 	"statsd": "statsd.eqiad.wmnet:8125",
 
-	"dispatcher": "php /usr/local/apache/common/multiversion/MWScript.php runJobs.php --wiki=%(db)x --type=%(type)x --maxtime=%(maxtime)x --memory-limit=%(maxmem)x --result=json"
+	"dispatcher": "php /srv/mediawiki/multiversion/MWScript.php runJobs.php --wiki=%(db)x --type=%(type)x --maxtime=%(maxtime)x --memory-limit=%(maxmem)x --result=json"
 }
