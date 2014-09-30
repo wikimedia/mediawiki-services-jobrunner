@@ -706,7 +706,7 @@ LUA;
 	 */
 	public function debug( $s ) {
 		if ( $this->verbose ) {
-			print "$s\n";
+			print date( DATE_ISO8601 ) . ": $s\n";
 		}
 	}
 
