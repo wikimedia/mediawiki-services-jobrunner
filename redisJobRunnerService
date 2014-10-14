@@ -415,7 +415,6 @@ class RedisJobRunnerService {
 			if attempts < rAttempts then
 				-- Claim expired and attempts left: re-enqueue the job
 				redis.call('lPush',kUnclaimed,id)
-				redis.call('hIncrBy',kAttempts,id,1)
 				released = released + 1
 			else
 				-- Claim expired and no attempts left: mark the job as dead
