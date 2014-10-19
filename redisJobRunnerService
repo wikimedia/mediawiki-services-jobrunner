@@ -369,7 +369,8 @@ class RedisJobRunnerService {
 	/**
 	 * Recycle or destroy any jobs that have been claimed for too long
 	 * and release any ready delayed jobs into the queue. Also abandon
-	 * and prune out jobs that failed too many times.
+	 * and prune out jobs that failed too many times. This updates the
+	 * aggregator server as necessary.
 	 *
 	 * @note: similar to JobQueueRedis.php periodic tasks method
 	 * @return int|bool Number of jobs recycled/deleted/undelayed/abandoned (false if not run)
@@ -405,7 +406,7 @@ class RedisJobRunnerService {
 <<<LUA
 		local kClaimed, kAttempts, kUnclaimed, kData, kAbandoned, kDelayed = unpack(KEYS)
 		local rClaimCutoff, rPruneCutoff, rAttempts, rTime = unpack(ARGV)
-		local released,abandoned,pruned,undelayed = 0,0,0,0
+		local released,abandoned,pruned,undelayed,ready = 0,0,0,0,0
 		-- Get all non-dead jobs that have an expired claim on them.
 		-- The score for each item is the last claim timestamp (UNIX).
 		local staleClaims = redis.call('zRangeByScore',kClaimed,0,rClaimCutoff)
@@ -441,7 +442,8 @@ class RedisJobRunnerService {
 			redis.call('zRem',kDelayed,id)
 		end
 		undelayed = #ids
-		return {released,abandoned,pruned,undelayed}
+		ready = redis.call('lSize',kUnclaimed)
+		return {released,abandoned,pruned,undelayed,ready}
 LUA;
 
 		$ok = true;
@@ -513,8 +515,11 @@ LUA;
 						}
 						list( $qType, $qWiki ) = $paramsByQueue[$i]['queue'];
 						$tasksRun += array_sum( $result );
-						list( $released, $abandoned, $pruned, $undelayed ) = $result;
-						if ( $released > 0 || $undelayed > 0 ) {
+						list( $released, $abandoned, $pruned, $undelayed, $ready ) = $result;
+						if ( $released > 0 || $undelayed > 0 || $ready > 0 ) {
+							// Update the map in the aggregator as needed. This checks
+							// $ready to handle lost aggregator updates as well as to
+							// merge after network partitions that caused fail-over.
 							$mapSet[$this->encQueueName( $qType, $qWiki )] = $now;
 						}
 						$this->incrStats( "job-recycle.$qType.$qWiki", $released );
