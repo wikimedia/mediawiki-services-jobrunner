@@ -1,13 +1,15 @@
 // Configuration file for MediaWiki Jobrunner
 // This file is managed by Puppet
-
 {
 	"groups": {
 		"basic": {
+			// Number of runner processes in this group
 			"runners": 19,
+			// Job types to include ("*" means "all")
 			"include": [
 				"*"
 			],
+			// Job types to exempt (useful when combined with "*")
 			"exclude": [
 				"AssembleUploadChunks",
 				"ParsoidCacheUpdateJobOnDependencyChange",
@@ -93,7 +95,9 @@
 		"password": "XXXXX"
 	},
 
+	// Address to send statsd metrics to
 	"statsd": "statsd.eqiad.wmnet:8125",
 
+	// Command used to launch a runner for a given job queue
 	"dispatcher": "php /srv/mediawiki/multiversion/MWScript.php runJobs.php --wiki=%(db)x --type=%(type)x --maxtime=%(maxtime)x --memory-limit=%(maxmem)x --result=json"
 }

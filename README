@@ -5,27 +5,14 @@ DESCRIPTION
 redisJobRunnerService is an infinite "while loop" used to call MediaWiki runJobs.php
 and eventually attempt to process any job enqueued. A number of virtual sub-loops with
 their own runners and job types must be defined via parameters. These loops can set any
-of the job types as either low or high priorty. High priority will get ~80% of the time
+of the job types as either low or high priority. High priority will get ~80% of the time
 share of the sub-loop under "busy" conditions. If there are few high priority jobs, the
 loops will spend much more of their time on the low priority ones.
 
-This script is normally ran from the $IP directory of MediaWiki.
-The --wrapper parameter is used to run some wrapper with a given command
-by passing runJobs.php and the rest of the parameters as arguments to it.
-For example, the value "php MWScript.php" could be used.
-
+The runner must be started with a config file location specified.
+An annotated example config file is provided in jobrunner.sample.json.
 You will probably want to run this script under your webserver username.
+The runner can be made into a service via upstart (or anything comparable).
 
 Example:
-// Process jobs of type "webVideoTranscode" with a maxtime of 4 hours with 5 runners
-redisJobRunnerService --aggrSrvs <h:p> --queueSrvs <h:p> --timeout 14400 --runners 5:webVideoTranscode
-
-// Process jobs of type "AssembleUploadChunks"/"PublishedStashedFile" with 2 runners
-redisJobRunnerService --aggrSrvs <h:p> --queueSrvs <h:p> --runners "5:AssembleUploadChunks,PublishedStashedFile'
-
-// Process jobs of type "A"/"B" with 2 runners and "C"/"D" with 2 runners
-redisJobRunnerService --aggrSrvs <h:p> --queueSrvs <h:p> --runners "5:A,B|3:C,D"
-
-// Process jobs of all runners except refreshLinks/null and deprioritize renameUser
-redisJobRunnerService --aggrSrvs <h:p> --queueSrvs <h:p> --runners "5:*,-refreshLinks,-null,~renameUser"
-
+redisJobRunnerService --config-file=/etc/jobrunner/jobrunner.json --verbose
