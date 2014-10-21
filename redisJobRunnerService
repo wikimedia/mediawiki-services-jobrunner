@@ -442,7 +442,7 @@ class RedisJobRunnerService {
 			redis.call('zRem',kDelayed,id)
 		end
 		undelayed = #ids
-		ready = redis.call('lSize',kUnclaimed)
+		ready = redis.call('lLen',kUnclaimed)
 		return {released,abandoned,pruned,undelayed,ready}
 LUA;
 
