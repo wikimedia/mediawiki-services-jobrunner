@@ -327,7 +327,6 @@ class RedisJobRunnerService {
 		if ( $cacheTimestamp < microtime( true ) - 1.0 ) {
 			$conn = false;
 			// Connect to the first working server on the list
-			// @TODO: periodically merge the fallback server maps to the active one
 			foreach ( $this->aggrSrvs as $server ) {
 				$conn = $this->getRedisConn( $server );
 				if ( $conn ) {
