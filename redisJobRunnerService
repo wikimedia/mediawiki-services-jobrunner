@@ -662,6 +662,9 @@ LUA;
 	 */
 	protected function redisCmd( Redis $conn, $cmd, array $args = array() ) {
 		$conn->clearLastError();
+		// we had some job runners oom'ing on this call, log what we are
+		// doing so there is relevant information next to the oom
+		$this->debug( "Redis cmd: $cmd " . json_encode( $args ) );
 		$res = call_user_func_array( array( $conn, $cmd ), $args );
 		if ( $conn->getLastError() ) {
 			// Make all errors be exceptions instead of "most but not all".
