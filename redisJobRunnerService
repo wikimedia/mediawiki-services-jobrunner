@@ -545,7 +545,7 @@ LUA;
 					// to merge after network partitions that caused aggregator fail-over.
 					$mapSet[$this->encQueueName( $qType, $qWiki )] = $now;
 				}
-				$jobs += array_sum( $result );
+				$jobs += ( array_sum( $result ) - $ready );
 				$this->incrStats( "job-recycle.$qType.$qWiki", $released );
 				$this->incrStats( "job-abandon.$qType.$qWiki", $abandoned );
 				$this->incrStats( "job-undelay.$qType.$qWiki", $undelayed );
