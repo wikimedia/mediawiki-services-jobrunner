@@ -188,12 +188,14 @@ class RedisJobRunnerService {
 		}
 
 		if ( isset( $config['statsd'] ) ) {
-			$m = array();
-			if ( preg_match( '/^(.+):(\d+)$/', $config['statsd'], $m ) ) {
-				$this->statsdHost = $m[1];
-				$this->statsdPort = (int)$m[2];
+			if ( strpos( $config['statsd'], ':' ) !== false ) {
+				$parts = explode( ':', $config['statsd'] );
+				$this->statsdHost = $parts[0];
+				$this->statsdPort = (int)$parts[1];
 			} else {
-				throw new Exception( "Invalid profiler address '{$config['statsd']}'." );
+				// Use default statsd port if not specified
+				$this->statsdHost = $config['statsd'];
+				$this->statsdPort = 8125;
 			}
 		}
 	}
