@@ -222,7 +222,7 @@ abstract class RedisJobService {
 
 	/**
 	 * @param string $server
-	 * @return Redis|boolean|array
+	 * @return Redis|boolean
 	 */
 	public function getRedisConn( $server ) {
 		// Check the listing "dead" servers which have had a connection errors.
@@ -310,6 +310,61 @@ abstract class RedisJobService {
 	}
 
 	/**
+	 * Execute a command on the current working server in $servers
+	 *
+	 * @param array $servers Ordered list of servers to attempt
+	 * @param string $cmd
+	 * @param array $args
+	 * @return mixed
+	 * @throws RedisExceptionHA
+	 */
+	public function redisCmdHA( array $servers, $cmd, array $args = array() ) {
+		foreach ( $servers as $server ) {
+			$conn = $this->getRedisConn( $server );
+			if ( $conn ) {
+				try {
+					return $this->redisCmd( $conn, $cmd, $args );
+				} catch ( RedisException $e ) {
+					$this->handleRedisError( $e, $server );
+				}
+			}
+		}
+
+		throw new RedisExceptionHA( "Could not excecute command on any servers." );
+	}
+
+	/**
+	 * Execute a command on all servers in $servers
+	 *
+	 * @param array $servers List of servers to attempt
+	 * @param string $cmd
+	 * @param array $args
+	 * @return integer Number of servers updated
+	 * @throws RedisExceptionHA
+	 */
+	public function redisCmdBroadcast( array $servers, $cmd, array $args = array() ) {
+		$updated = 0;
+
+		foreach ( $servers as $server ) {
+			$conn = $this->getRedisConn( $server );
+			if ( $conn ) {
+				try {
+					$this->redisCmd( $conn, $cmd, $args );
+					++$updated;
+				} catch ( RedisException $e ) {
+					$this->handleRedisError( $e, $server );
+				}
+			}
+		}
+
+		if ( !$updated ) {
+			throw new RedisExceptionHA( "Could not excecute command on any servers." );
+		}
+
+		return $updated;
+	}
+
+	/**
 	 * @param string $event
 	 * @param integer $delta
 	 * @return void
@@ -365,3 +420,5 @@ abstract class RedisJobService {
 		fwrite( STDERR, date( DATE_ISO8601 ) . ": $s\n" );
 	}
 }
+
+class RedisExceptionHA extends Exception {}

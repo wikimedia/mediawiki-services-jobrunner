@@ -35,6 +35,10 @@ class RedisJobChronService extends RedisJobService {
 			}
 		}
 
+
+		// This is randomized to scale the liveliness with the # of runners.
+		$lastPeriodicTime =  time() - mt_rand( 0, self::TASK_PERIOD_SEC );
+
 		$memLast = memory_get_usage();
 		$this->incrStats( "start-chron.$host", 1 );
 		while ( true ) {
@@ -42,19 +46,72 @@ class RedisJobChronService extends RedisJobService {
 				pcntl_signal_dispatch();
 			}
 
-			// Do periodic queue tasks on all queues every 5 minutes
-			$count = $this->executeReadyPeriodicTasks();
-			if ( is_int( $count ) ) {
+			// Do tasks on a simple interval cycle...
+			if ( ( time() - $lastPeriodicTime ) > self::TASK_PERIOD_SEC ) {
+				$lastPeriodicTime = time();
+
+				$count = $this->syncAggregatorRegistry();
+				$this->notice( "Synced $count aggregator(s) to the current one." );
+				$this->incrStats( "periodictasks.sync.$host", 1 );
+
+				$count = $this->executePeriodicTasks();
 				$this->notice( "Updated the state of $count job(s) (recycle/undelay/abandon)." );
 				$this->incrStats( "periodictasks.done.$host", 1 );
 			}
+
 			sleep( 1 );
+
 			// Track memory usage
 			$memCurrent = memory_get_usage();
 			$this->debug( "Memory usage: $memCurrent bytes." );
 			$this->incrStats( "memory.$host", $memCurrent - $memLast );
 			$memLast = $memCurrent;
 		}
+	}
+
+	/**
+	 * Merge wiki and queue type registration data into all aggregators
+	 *
+	 * This makes sure that the data is not lost on aggregator failure
+	 *
+	 * @return integer Servers fully updated
+	 */
+	private function syncAggregatorRegistry() {
+		$count = count( $this->aggrSrvs );
+
+		try {
+			$types = $this->redisCmdHA(
+				$this->aggrSrvs,
+				'hGetAll',
+				array( $this->getQueueTypesKey() )
+			);
+			if ( $types ) {
+				$okCount = $this->redisCmdBroadcast(
+					$this->aggrSrvs,
+					'hMSet',
+					array( $this->getQueueTypesKey(), $types )
+				);
+				$count = min( $count, $okCount );
+			}
+
+			$wikis = $this->redisCmdHA(
+				$this->aggrSrvs,
+				'sMembers',
+				array( $this->getWikiSetKey() )
+			);
+			if ( $wikis ) {
+				$okCount = $this->redisCmdBroadcast(
+					$this->aggrSrvs,
+					'sAdd',
+					array( $this->getWikiSetKey(), $wikis )
+				);
+				$count = min( $count, $okCount );
+			}
+		} catch ( RedisExceptionHA $e ) {
+			$count = 0;
+		}
+
+		return $count;
 	}
 
 	/**
@@ -66,38 +123,23 @@ class RedisJobChronService extends RedisJobService {
 	 * @note: similar to JobQueueRedis.php periodic tasks method
 	 * @return int|bool Number of jobs recycled/deleted/undelayed/abandoned (false if not run)
 	 */
-	private function executeReadyPeriodicTasks() {
+	private function executePeriodicTasks() {
 		$jobs = 0;
-
-		// Run no more than every 5 minutes.
-		// This is randomized to scale the liveliness with the # of runners.
-		static $lastPeriodicTime = null;
-		$lastPeriodicTime = $lastPeriodicTime ?: time() - mt_rand( 0, self::TASK_PERIOD_SEC );
-		if ( ( time() - $lastPeriodicTime ) <= self::TASK_PERIOD_SEC ) {
-			return false;
-		}
-		$lastPeriodicTime = time();
 
 		$host = gethostname();
 
-		$aConn = false;
-		// Connect to the first working server on the list
-		foreach ( $this->aggrSrvs as $aServer ) {
-			$aConn = $this->getRedisConn( $aServer );
-			if ( $aConn ) {
-				break;
-			}
-		}
-
-		if ( !$aConn ) {
-			$this->incrStats( "periodictasks.failed.$host", 1 );
-			return $jobs;
-		}
-
 		$ok = true;
 		try {
-			$types = $this->redisCmd( $aConn, 'hKeys', array( $this->getQueueTypesKey() ) );
-			$wikiIds = $this->redisCmd( $aConn, 'sMembers', array( $this->getWikiSetKey() ) );
+			$types = $this->redisCmdHA(
+				$this->aggrSrvs,
+				'hKeys',
+				array( $this->getQueueTypesKey() )
+			);
+			$wikiIds = $this->redisCmdHA(
+				$this->aggrSrvs,
+				'sMembers',
+				array( $this->getWikiSetKey() )
+			);
 			if ( !is_array( $types ) || !is_array( $wikiIds ) ) {
 				$this->incrStats( "periodictasks.failed.$host", 1 );
 				return $jobs;
@@ -145,10 +187,13 @@ class RedisJobChronService extends RedisJobService {
 				}
 			}
 			// Update the map in the aggregator as queues become ready
-			$this->redisCmd( $aConn, 'hMSet', array( $this->getReadyQueueKey(), $mapSet ) );
-		} catch ( RedisException $e ) {
+			$this->redisCmdHA(
+				$this->aggrSrvs,
+				'hMSet',
+				array( $this->getReadyQueueKey(), $mapSet )
+			);
+		} catch ( RedisExceptionHA $e ) {
 			$ok = false;
-			$this->handleRedisError( $e, $aServer );
 		}
 
 		if ( !$ok ) {
