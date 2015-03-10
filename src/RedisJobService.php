@@ -176,6 +176,19 @@ abstract class RedisJobService {
 	}
 
 	/**
+	 * Terminate this script if the OS/PHP environment is incompatible
+	 */
+	public static function checkEnvironment() {
+		if ( !class_exists( 'Redis' ) ) {
+			die( "The phpredis extension is not installed; aborting.\n" );
+		} elseif ( !function_exists( 'pcntl_signal' ) ) {
+			die( "The pcntl module is not available; aborting.\n" );
+		} elseif ( !function_exists( 'posix_kill' ) ) {
+			die( "posix_kill is not available; aborting.\n" );
+		}
+	}
+
+	/**
 	 * Entry point method that starts the service in earnest and keeps running
 	 */
 	abstract public function main();

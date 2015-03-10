@@ -3,11 +3,11 @@
 
 if ( PHP_SAPI !== 'cli' ) {
 	die( "This is not a valid entry point.\n" );
-} elseif ( !class_exists( 'Redis' ) ) {
-	die( "The phpredis extension is not installed; aborting.\n" );
 }
 
 require( __DIR__ . '/src/RedisJobService.php' );
+
+RedisJobService::checkEnvironment();
 
 class RedisJobChronService extends RedisJobService {
 	const TASK_PERIOD_SEC = 60;
@@ -20,19 +20,16 @@ class RedisJobChronService extends RedisJobService {
 
 		$host = gethostname();
 
-		// Setup signal handlers
-		$useSignals = function_exists( 'pcntl_signal' );
-		if ( $useSignals ) {
-			$handlerFunc = function( $signo ) {
-				print "Caught signal ($signo)\n";
-				exit( 128 + $signo );
-			};
-			$ok = pcntl_signal( SIGHUP, $handlerFunc )
-				&& pcntl_signal( SIGINT, $handlerFunc )
-				&& pcntl_signal( SIGTERM, $handlerFunc );
-			if ( !$ok ) {
-				throw new Exception( 'Could not install singal handlers.' );
-			}
+		// Setup signal handlers...
+		$handlerFunc = function( $signo ) {
+			print "Caught signal ($signo)\n";
+			exit( 128 + $signo );
+		};
+		$ok = pcntl_signal( SIGHUP, $handlerFunc )
+			&& pcntl_signal( SIGINT, $handlerFunc )
+			&& pcntl_signal( SIGTERM, $handlerFunc );
+		if ( !$ok ) {
+			throw new Exception( 'Could not install singal handlers.' );
 		}
 
 
@@ -42,9 +39,7 @@ class RedisJobChronService extends RedisJobService {
 		$memLast = memory_get_usage();
 		$this->incrStats( "start-chron.$host", 1 );
 		while ( true ) {
-			if ( $useSignals ) {
-				pcntl_signal_dispatch();
-			}
+			pcntl_signal_dispatch();
 
 			// Do tasks on a simple interval cycle...
 			if ( ( time() - $lastPeriodicTime ) > self::TASK_PERIOD_SEC ) {

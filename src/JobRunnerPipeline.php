@@ -1,9 +1,5 @@
 <?php
 
-if ( !function_exists( 'posix_kill' ) ) {
-	function posix_kill() {} // no-op on Windows; procs killed with proc_terminate()
-}
-
 class JobRunnerPipeline {
 	/** @var RedisJobService */
 	protected $srvc;
@@ -30,6 +26,8 @@ class JobRunnerPipeline {
 			'cmd'     => null,
 			'stime'   => 0,
 			'sigtime' => 0,
+			'stdout' => '',
+			'stderr' => ''
 		);
 	}
 
@@ -45,9 +43,12 @@ class JobRunnerPipeline {
 		$host = gethostname();
 		$cTime = time();
 		foreach ( $this->procMap[$loop] as $slot => &$procSlot ) {
-			$status = $procSlot['handle']
-				? proc_get_status( $procSlot['handle'] )
-				: false;
+			$status = $procSlot['handle'] ? proc_get_status( $procSlot['handle'] ) : null;
+			if ( $status ) {
+				// Keep reading in any output (nonblocking) to child process lockups
+				$procSlot['stdout'] .= fread( $procSlot['pipes'][1], 65535 );
+				$procSlot['stderr'] .= fread( $procSlot['pipes'][2], 65535 );
+			}
 			if ( $status && $status['running'] ) {
 				$maxReal = isset( $this->srvc->maxRealMap[$procSlot['type']] )
 					? $this->srvc->maxRealMap[$procSlot['type']]
@@ -68,9 +69,8 @@ class JobRunnerPipeline {
 					continue; // slot is busy
 				}
 			} elseif ( $status && !$status['running'] ) {
-				$response = trim( stream_get_contents( $procSlot['pipes'][1] ) );
 				// $result will be an array if no exceptions happened
-				$result = json_decode( $response, true );
+				$result = json_decode( trim( $procSlot['stdout'] ), true );
 				if ( $status['exitcode'] == 0 && is_array( $result ) ) {
 					// If this finished early, lay off of the queue for a while
 					if ( ( $cTime - $procSlot['stime'] ) < $this->srvc->hpMaxTime/2 ) {
@@ -87,7 +87,7 @@ class JobRunnerPipeline {
 				} else {
 					// Mention any serious errors that may have occured
 					$cmd = $procSlot['cmd'];
-					$error = trim( stream_get_contents( $procSlot['pipes'][2] ) ) ?: $response;
+					$error = $procSlot['stderr'] ?: $procSlot['stdout'];
 					if ( strlen( $error ) > 4096 ) { // truncate long errors
 						$error = mb_substr( $error, 0, 4096 ) . '...';
 					}
@@ -193,9 +193,12 @@ class JobRunnerPipeline {
 		// Start the runner in the background
 		$procSlot['handle'] = proc_open( $cmd, $descriptors, $procSlot['pipes'] );
 		if ( $procSlot['handle'] ) {
+			// Make sure socket reads don't wait for data
+			stream_set_blocking( $procSlot['pipes'][1], 0 );
+			stream_set_blocking( $procSlot['pipes'][2], 0 );
 			// Set a timeout so stream_get_contents() won't block for sanity
-			stream_set_timeout( $procSlot['pipes'][1], 5 );
-			stream_set_timeout( $procSlot['pipes'][2], 5 );
+			stream_set_timeout( $procSlot['pipes'][1], 1 );
+			stream_set_timeout( $procSlot['pipes'][2], 1 );
 			// Close the unused STDIN pipe
 			fclose( $procSlot['pipes'][0] );
 			unset( $procSlot['pipes'][0] ); // unused
@@ -206,6 +209,8 @@ class JobRunnerPipeline {
 		$procSlot['cmd'] = $cmd;
 		$procSlot['stime'] = time();
 		$procSlot['sigtime'] = 0;
+		$procSlot['stdout'] = '';
+		$procSlot['stderr'] = '';
 
 		if ( $procSlot['handle'] ) {
 			return true;
@@ -249,6 +254,8 @@ class JobRunnerPipeline {
 		$procSlot['stime'] = 0;
 		$procSlot['sigtime'] = 0;
 		$procSlot['cmd'] = null;
+		$procSlot['stdout'] = '';
+		$procSlot['stderr'] = '';
 	}
 
 	public function terminateSlots() {
