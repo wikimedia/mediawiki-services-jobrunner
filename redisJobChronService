@@ -112,12 +112,8 @@ class RedisJobChronService extends RedisJobService {
 			// Build up the script arguments for each queue...
 			$paramsByQueue = array();
 			foreach ( $types as $type ) {
-				$ttl = isset( $this->claimTTLMap[$type] )
-					? $this->claimTTLMap[$type]
-					: $this->claimTTLMap['*'];
-				$attempts = isset( $this->attemptsMap[$type] )
-					? $this->attemptsMap[$type]
-					: $this->attemptsMap['*'];
+				$ttl = $this->getTTLForType( $type );
+				$attempts = $this->getAttemptsForType( $type );
 				foreach ( $wikiIds as $wikiId ) {
 					$paramsByQueue[] = array(
 						'queue'  => array( $type, $wikiId ),
@@ -157,15 +153,17 @@ class RedisJobChronService extends RedisJobService {
 
 		if ( !$ok ) {
 			$this->error( "Failed to do periodic tasks for some queues." );
-			$this->incrStats( "periodictasks.failed.$host", 1 );
 		}
 
 		return $jobs;
 	}
 
 	private function updateQueueServer( $qServer, array $paramsByQueue, array &$mapSet, &$jobs ) {
+		$host = gethostname();
+
 		$qConn = $this->getRedisConn( $qServer );
 		if ( !$qConn ) {
+			$this->incrStats( "periodictasks.failed.$host", count( $paramsByQueue ) );
 			return false; // partition down
 		}
 
@@ -213,7 +211,7 @@ class RedisJobChronService extends RedisJobService {
 		return {released,abandoned,pruned,undelayed,ready}
 LUA;
 
-		$ok = true;
+		$failed = 0;
 		try {
 			$sha1 = $this->redisCmd( $qConn, 'script', array( 'load', $script ) );
 
@@ -227,7 +225,7 @@ LUA;
 			$now = time();
 			foreach ( $res as $i => $result ) {
 				if ( !$result ) {
-					$ok = false;
+					++$failed;
 					continue;
 				}
 				list( $qType, $qWiki ) = $paramsByQueue[$i]['queue'];
@@ -243,11 +241,33 @@ LUA;
 				$this->incrStats( "job-undelay.$qType.$qWiki", $undelayed );
 			}
 		} catch ( RedisException $e ) {
-			$ok = false;
+			$failed += count( $paramsByQueue );
 			$this->handleRedisError( $e, $qServer );
 		}
 
-		return $ok;
+		$this->incrStats( "periodictasks.failed.$host", $failed );
+
+		return ( $failed == 0 );
+	}
+
+	/**
+	 * @param string $type Queue type
+	 * @return integer Seconds
+	 */
+	protected function getTTLForType( $type ) {
+		return isset( $this->claimTTLMap[$type] )
+			? $this->claimTTLMap[$type]
+			: $this->claimTTLMap['*'];
+	}
+
+	/**
+	 * @param string $type Queue type
+	 * @return integer
+	 */
+	protected function getAttemptsForType( $type ) {
+		return isset( $this->attemptsMap[$type] )
+			? $this->attemptsMap[$type]
+			: $this->attemptsMap['*'];
 	}
 }
 
