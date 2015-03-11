@@ -45,7 +45,7 @@ class JobRunnerPipeline {
 		foreach ( $this->procMap[$loop] as $slot => &$procSlot ) {
 			$status = $procSlot['handle'] ? proc_get_status( $procSlot['handle'] ) : null;
 			if ( $status ) {
-				// Keep reading in any output (nonblocking) to child process lockups
+				// Keep reading in any output (nonblocking) to avoid process lockups
 				$procSlot['stdout'] .= fread( $procSlot['pipes'][1], 65535 );
 				$procSlot['stderr'] .= fread( $procSlot['pipes'][2], 65535 );
 			}
