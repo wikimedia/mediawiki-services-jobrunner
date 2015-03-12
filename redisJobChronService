@@ -98,7 +98,7 @@ class RedisJobChronService extends RedisJobService {
 				$okCount = $this->redisCmdBroadcast(
 					$this->aggrSrvs,
 					'sAdd',
-					array( $this->getWikiSetKey(), $wikis )
+					array_merge( array( $this->getWikiSetKey() ), $wikis )
 				);
 				$count = min( $count, $okCount );
 			}
