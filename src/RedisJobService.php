@@ -387,7 +387,7 @@ abstract class RedisJobService {
 			return; // nothing to do
 		}
 
-		static $format = "%s:%s|m\n";
+		static $format = "%s:%s|c\n";
 		$packet = sprintf( $format, "jobrunner.$event", $delta );
 
 		if ( !function_exists( 'socket_create' ) ) {
