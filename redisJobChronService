@@ -276,9 +276,9 @@ LUA;
 					$mapSet[$this->encQueueName( $qType, $qWiki )] = $now;
 				}
 				$jobs += ( array_sum( $result ) - $ready );
-				$this->incrStats( "job-recycle.$qType.$qWiki", $released );
-				$this->incrStats( "job-abandon.$qType.$qWiki", $abandoned );
-				$this->incrStats( "job-undelay.$qType.$qWiki", $undelayed );
+				$this->incrStats( "job-recycle.$qType", $released );
+				$this->incrStats( "job-abandon.$qType", $abandoned );
+				$this->incrStats( "job-undelay.$qType", $undelayed );
 			}
 		} catch ( RedisException $e ) {
 			$failed += count( $paramsByQueue );
