@@ -307,6 +307,7 @@ abstract class RedisJobService {
 	 * @param string $cmd
 	 * @param array $args
 	 * @return mixed
+	 * @throws RedisException
 	 */
 	public function redisCmd( Redis $conn, $cmd, array $args = array() ) {
 		$conn->clearLastError();
