@@ -32,7 +32,6 @@ class RedisJobChronService extends RedisJobService {
 			throw new Exception( 'Could not install singal handlers.' );
 		}
 
-
 		// This is randomized to scale the liveliness with the # of runners.
 		$lastPeriodicTime =  time() - mt_rand( 0, self::TASK_PERIOD_SEC );
 
@@ -171,7 +170,7 @@ class RedisJobChronService extends RedisJobService {
 				}
 			}
 			// Batch the Lua queries to avoid client OOMs
-			$paramsByQueueBatches = array_chunk( $paramsByQueue, 1000 );
+			$paramsByQueueBatches = array_chunk( $paramsByQueue, 500 );
 
 			$mapSet = array(); // ready map of (queue name => timestamp)
 			// Run the script on all job queue partitions...
