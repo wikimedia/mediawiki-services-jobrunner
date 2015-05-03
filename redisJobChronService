@@ -143,31 +143,39 @@ class RedisJobChronService extends RedisJobService {
 			shuffle( $types );
 			shuffle( $wikiIds );
 
+			$now = time();
+
 			// Build up the script arguments for each queue...
-			$paramsByQueue = new AppendIterator();
+			$paramsByQueue = array();
 			foreach ( $types as $type ) {
 				$ttl = $this->getTTLForType( $type );
 				$attempts = $this->getAttemptsForType( $type );
-				$paramsByQueue->append( new PeriodicScriptParamsIterator(
-					$type, $wikiIds, $ttl, $attempts
-				) );
+				foreach ( $wikiIds as $wikiId ) {
+					$paramsByQueue[] = array(
+						'queue'  => array( $type, $wikiId ),
+						'params' => array(
+							"{$wikiId}:jobqueue:{$type}:z-claimed", # KEYS[1]
+							"{$wikiId}:jobqueue:{$type}:h-attempts", # KEYS[2]
+							"{$wikiId}:jobqueue:{$type}:l-unclaimed", # KEYS[3]
+							"{$wikiId}:jobqueue:{$type}:h-data", # KEYS[4]
+							"{$wikiId}:jobqueue:{$type}:z-abandoned", # KEYS[5]
+							"{$wikiId}:jobqueue:{$type}:z-delayed", # KEYS[6]
+							$now - $ttl, # ARGV[1]
+							$now - 7 * 86400, # ARGV[2]
+							$attempts, # ARGV[3]
+							$now # ARGV[4]
+						),
+						'keys'   => 6 # number of first argument(s) that are keys
+					);
+				}
 			}
+			// Batch the Lua queries to avoid client OOMs
+			$paramsByQueueBatches = array_chunk( $paramsByQueue, 500 );
 
 			$mapSet = array(); // ready map of (queue name => timestamp)
 			// Run the script on all job queue partitions...
 			foreach ( $this->queueSrvs as $qServer ) {
-				$paramsByQueueBatch = array();
-				// Batch the Lua queries to avoid client OOMs
-				foreach ( $paramsByQueue as $params ) {
-					$paramsByQueueBatch[] = $params;
-					if ( count( $paramsByQueueBatch ) >= 500 ) {
-						$ok = $this->updateQueueServer(
-							$qServer, $paramsByQueueBatch, $mapSet, $jobs ) && $ok;
-						$paramsByQueueBatch = array();
-					}
-				}
-				if ( count( $paramsByQueueBatch ) ) {
-					// Finish the last batch
+				foreach ( $paramsByQueueBatches as $paramsByQueueBatch ) {
 					$ok = $this->updateQueueServer(
 						$qServer, $paramsByQueueBatch, $mapSet, $jobs ) && $ok;
 				}
@@ -299,67 +307,6 @@ LUA;
 		return isset( $this->attemptsMap[$type] )
 			? $this->attemptsMap[$type]
 			: $this->attemptsMap['*'];
-	}
-}
-
-class PeriodicScriptParamsIterator implements Iterator {
-	private $type;
-	private $domains;
-	private $claimTTL;
-	private $maxAttempts;
-
-	/**
-	 * @param string $type Queue/job type
-	 * @param array $domains Domain IDs
-	 * @param integer $claimTTL Claim TTL
-	 * @param integer $maxAttempts Max job attempts
-	 */
-	public function __construct( $type, array $domains, $claimTTL, $maxAttempts ) {
-		$this->type = $type;
-		$this->domains = $domains;
-		$this->claimTTL = $claimTTL;
-		$this->maxAttempts = $maxAttempts;
-	}
-
-	function rewind() {
-		reset( $this->domains );
-	}
-
-	function current() {
-		$domain = current( $this->domains );
-		if ( $domain === false ) {
-			return false;
-		}
-		$now = time();
-
-		return array(
-			'queue'  => array( $this->type, $domain ),
-			'params' => array(
-				"{$domain}:jobqueue:{$this->type}:z-claimed", # KEYS[1]
-				"{$domain}:jobqueue:{$this->type}:h-attempts", # KEYS[2]
-				"{$domain}:jobqueue:{$this->type}:l-unclaimed", # KEYS[3]
-				"{$domain}:jobqueue:{$this->type}:h-data", # KEYS[4]
-				"{$domain}:jobqueue:{$this->type}:z-abandoned", # KEYS[5]
-				"{$domain}:jobqueue:{$this->type}:z-delayed", # KEYS[6]
-				$now - $this->claimTTL, # ARGV[1]
-				$now - 7 * 86400, # ARGV[2]
-				$this->maxAttempts, # ARGV[3]
-				$now # ARGV[4]
-			),
-			'keys'   => 6 # number of first argument(s) that are keys
-		);
-	}
-
-	function key() {
-		return key( $this->domains );
-	}
-
-	function next() {
-		next( $this->domains );
-	}
-
-	function valid() {
-		return key( $this->domains ) !== null;
 	}
 }
 
