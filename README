@@ -16,3 +16,6 @@ The runner can be made into a service via upstart (or anything comparable).
 
 Example:
 redisJobRunnerService --config-file=/etc/jobrunner/jobrunner.json --verbose
+
+LICENSE
+GPLv2.0, see COPYING at the root of the repository for the complete license.
