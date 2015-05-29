@@ -1,0 +1,26 @@
+{
+	"name": "wikimedia/jobrunner",
+	"description": "Continuously process a MediaWiki jobqueue with Redis",
+	"authors": [
+		{
+			"name": "Aaron Schulz",
+			"email": "aschulz@wikimedia.org"
+		}
+	],
+	"support": {
+		"issues": "https://phabricator.wikimedia.org/tag/mediawiki-jobrunner/"
+	},
+
+	"require": {
+		"php": ">=5.3.2",
+		"ext-redis": "*"
+	},
+	"require-dev": {
+		"jakub-onderka/php-parallel-lint": "0.8.*"
+	},
+	"scripts": {
+		"test": [
+			"parallel-lint . --exclude vendor"
+		]
+	}
+}

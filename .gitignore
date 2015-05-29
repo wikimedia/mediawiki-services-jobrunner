@@ -1,4 +1,6 @@
 jobrunner.ini
 jobrunner.json.sample
 /nbproject/private/
-.*.swp
+/vendor/
+composer.lock
+*.swp
