@@ -55,7 +55,6 @@ class RedisJobChronService extends RedisJobService {
 
 			$count = $this->executePeriodicTasks();
 			$this->notice( "Updated the state of $count job(s) (recycle/undelay/abandon)." );
-			$this->incrStats( "periodictasks.done.$host", 1 );
 
 			sleep( 1 );
 
@@ -147,6 +146,7 @@ class RedisJobChronService extends RedisJobService {
 			// Only let a limited number of services do this at once
 			$lockKey = $this->poolLock( __METHOD__, count( $this->queueSrvs ), 300 );
 			if ( $lockKey === false ) {
+				$this->incrStats( "periodictasks.raced.$host", 1 );
 				$this->notice( "Raced out of periodic tasks." );
 				return $jobs;
 			}
@@ -189,6 +189,7 @@ class RedisJobChronService extends RedisJobService {
 			$this->poolUnlock( $lockKey );
 
 			++$this->periodicTaskRounds;
+			$this->incrStats( "periodictasks.done.$host", 1 );
 		} catch ( RedisExceptionHA $e ) {
 			$ok = false;
 		}
