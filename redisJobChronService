@@ -126,6 +126,16 @@ class RedisJobChronService extends RedisJobService {
 
 		$ok = true;
 		try {
+			// Only let a limited number of services do this at once
+			$lockKey = $this->poolLock( __METHOD__, count( $this->queueSrvs ), 300 );
+			if ( $lockKey === false ) {
+				$this->incrStats( "periodictasks.raced.$host", 1 );
+				$this->notice( "Raced out of periodic tasks." );
+				return $jobs;
+			}
+
+			$this->incrStats( "periodictasks.claimed.$host", 1 );
+
 			$types = $this->redisCmdHA(
 				$this->aggrSrvs,
 				'hKeys',
@@ -137,64 +147,56 @@ class RedisJobChronService extends RedisJobService {
 				array( $this->getWikiSetKey() )
 			);
 
-			// Sanity check wiki/type list
-			if ( !is_array( $types ) || !is_array( $wikiIds ) ) {
-				$this->incrStats( "periodictasks.failed.$host", 1 );
-				return $jobs;
-			}
+			if ( is_array( $types ) && is_array( $wikiIds ) ) {
+				// Job queue partition servers
+				$qServers = $this->queueSrvs;
+				// Randomize to scale the liveliness with the # of runners
+				shuffle( $types );
+				shuffle( $wikiIds );
+				shuffle( $qServers );
 
-			// Only let a limited number of services do this at once
-			$lockKey = $this->poolLock( __METHOD__, count( $this->queueSrvs ), 300 );
-			if ( $lockKey === false ) {
-				$this->incrStats( "periodictasks.raced.$host", 1 );
-				$this->notice( "Raced out of periodic tasks." );
-				return $jobs;
-			}
+				// Build up the script arguments for each queue
+				// using an Iterator to avoid client OOMs...
+				$paramsByQueue = new AppendIterator();
+				foreach ( $types as $type ) {
+					$paramsByQueue->append( new PeriodicScriptParamsIterator(
+						$type,
+						$wikiIds,
+						$this->getTTLForType( $type ),
+						$this->getAttemptsForType( $type )
+					) );
+				}
 
-			// Job queue partition servers
-			$qServers = $this->queueSrvs;
-			// Randomize to scale the liveliness with the # of runners
-			shuffle( $types );
-			shuffle( $wikiIds );
-			shuffle( $qServers );
-
-			// Build up the script arguments for each queue
-			// using an Iterator to avoid client OOMs...
-			$paramsByQueue = new AppendIterator();
-			foreach ( $types as $type ) {
-				$paramsByQueue->append( new PeriodicScriptParamsIterator(
-					$type,
-					$wikiIds,
-					$this->getTTLForType( $type ),
-					$this->getAttemptsForType( $type )
-				) );
+				// Track queues that become "ready"
+				$mapSet = array(); // map of (queue name => timestamp)
+				// Run the script on all job queue partitions...
+				foreach ( $qServers as $qServer ) {
+					$ok = $this->updateQueueServer(
+						$qServer, $paramsByQueue, $mapSet, $jobs, $lockKey
+					) && $ok;
+				}
+				// Update the map in the aggregator as queues become ready
+				$this->redisCmdHA(
+					$this->aggrSrvs,
+					'hMSet',
+					array( $this->getReadyQueueKey(), $mapSet )
+				);
+			} else {
+				$ok = false;
 			}
-
-			// Track queues that become "ready"
-			$mapSet = array(); // map of (queue name => timestamp)
-			// Run the script on all job queue partitions...
-			foreach ( $qServers as $qServer ) {
-				$ok = $this->updateQueueServer(
-					$qServer, $paramsByQueue, $mapSet, $jobs, $lockKey
-				) && $ok;
-			}
-			// Update the map in the aggregator as queues become ready
-			$this->redisCmdHA(
-				$this->aggrSrvs,
-				'hMSet',
-				array( $this->getReadyQueueKey(), $mapSet )
-			);
 
 			// Release the pool lock
 			$this->poolUnlock( $lockKey );
 
 			++$this->periodicTaskRounds;
-			$this->incrStats( "periodictasks.done.$host", 1 );
 		} catch ( RedisExceptionHA $e ) {
 			$ok = false;
 		}
 
-		if ( !$ok ) {
+		if ( $ok ) {
+			$this->incrStats( "periodictasks.done.$host", 1 );
+		} else {
+			$this->incrStats( "periodictasks.failed.$host", 1 );
 			$this->error( "Failed to do periodic tasks for some queues." );
 		}
 
