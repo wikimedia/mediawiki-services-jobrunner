@@ -81,14 +81,14 @@ abstract class RedisJobService {
 		$file = $args['config-file'];
 		$content = file_get_contents( $file );
 		if ( $content === false ) {
-			throw new Exception( "Coudn't open configuration file '{$file}''" );
+			throw new InvalidArgumentException( "Coudn't open configuration file '{$file}''" );
 		}
 
 		// Remove comments and load into an array
 		$content = trim( preg_replace( '/\/\/.*$/m', '',  $content ) );
 		$config = json_decode( $content, true );
 		if ( !is_array( $config ) ) {
-			throw new Exception( "Could not parse JSON file '{$file}'." );
+			throw new InvalidArgumentException( "Could not parse JSON file '{$file}'." );
 		}
 
 		$instance = new static( $config );
@@ -103,20 +103,21 @@ abstract class RedisJobService {
 	protected function __construct( array $config ) {
 		$this->aggrSrvs = $config['redis']['aggregators'];
 		if ( !count( $this->aggrSrvs ) ) {
-			throw new Exception( "Empty list for 'redis.aggregators'." );
+			throw new InvalidArgumentException( "Empty list for 'redis.aggregators'." );
 		}
 		$this->queueSrvs = $config['redis']['queues'];
 		if ( !count( $this->queueSrvs ) ) {
-			throw new Exception( "Empty list for 'redis.queues'." );
+			throw new InvalidArgumentException( "Empty list for 'redis.queues'." );
 		}
 		$this->dispatcher = $config['dispatcher'];
 		if ( !$this->dispatcher ) {
-			throw new Exception( "No command provided for 'dispatcher'." );
+			throw new InvalidArgumentException( "No command provided for 'dispatcher'." );
 		}
 
 		foreach ( $config['groups'] as $name => $group ) {
 			if ( !is_int( $group['runners'] ) ) {
-				throw new Exception( "Invalid 'runners' value for runner group '$name'." );
+				throw new InvalidArgumentException(
+					"Invalid 'runners' value for runner group '$name'." );
 			} elseif ( $group['runners'] == 0 ) {
 				continue; // loop disabled
 			}
@@ -125,7 +126,8 @@ abstract class RedisJobService {
 				if ( !isset( $group[$k] ) ) {
 					$group[$k] = array();
 				} elseif ( !is_array( $group[$k] ) ) {
-					throw new Exception( "Invalid '$k' value for runner group '$name'." );
+					throw new InvalidArgumentException(
+						"Invalid '$k' value for runner group '$name'." );
 				}
 			}
 			$this->loopMap[] = $group;

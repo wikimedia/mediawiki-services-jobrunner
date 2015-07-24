@@ -314,6 +314,7 @@ class RedisJobChronService extends RedisJobService {
 				$this->incrStats( "job-recycle.$qType", $released );
 				$this->incrStats( "job-abandon.$qType", $abandoned );
 				$this->incrStats( "job-undelay.$qType", $undelayed );
+				$this->incrStats( "job-prune.$qType", $pruned );
 			}
 		} catch ( RedisException $e ) {
 			$failed += count( $paramsByQueue );
