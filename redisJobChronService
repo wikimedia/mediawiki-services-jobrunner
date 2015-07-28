@@ -452,7 +452,7 @@ class PeriodicScriptParamsIterator implements Iterator {
 	public static function getChronScript() {
 		static $script =
 		<<<LUA
-				local kClaimed, kAttempts, kUnclaimed, kData, kAbandoned, kDelayed = unpack(KEYS)
+		local kClaimed, kAttempts, kUnclaimed, kData, kAbandoned, kDelayed = unpack(KEYS)
 		local rClaimCutoff, rPruneCutoff, rAttempts, rTime = unpack(ARGV)
 		local released,abandoned,pruned,undelayed,ready = 0,0,0,0,0
 		-- Short-circuit if there is nothing at all in the queue
@@ -464,10 +464,10 @@ class PeriodicScriptParamsIterator implements Iterator {
 		local staleClaims = redis.call('zRangeByScore',kClaimed,0,rClaimCutoff)
 		for k,id in ipairs(staleClaims) do
 			local timestamp = redis.call('zScore',kClaimed,id)
-			local attempts = redis.call('hGet',kAttempts,id)
-			if attempts < rAttempts then
+			local attempts = 1*redis.call('hGet',kAttempts,id)
+			if attempts < 1*rAttempts then
 				-- Claim expired and attempts left: re-enqueue the job
-				redis.call('lPush',kUnclaimed,id)
+				redis.call('rPush',kUnclaimed,id)
 				released = released + 1
 			else
 				-- Claim expired and no attempts left: mark the job as dead
