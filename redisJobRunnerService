@@ -51,7 +51,7 @@ class RedisJobRunnerService extends RedisJobService {
 			// Get the list of ready queues
 			$pending =& $this->getReadyQueueMap();
 			if ( !count( $pending ) ) {
-				$this->notice( "No jobs available..." );
+				$this->debug( "No jobs available..." );
 				$this->incrStats( "idle.$host", 1 );
 				usleep( 100000 ); // no jobs
 				continue;
