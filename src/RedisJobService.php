@@ -39,8 +39,8 @@ abstract class RedisJobService {
 	public $hpMaxDelay = 120;
 	/**
 	 * The maxtime parameter for runJobs.php for low priority jobs.
-	 * The lower this value is, the less jobs of one wiki can hog attention
-	 * from the jobs on other wikis, though more overhead is incurred.
+	 * The lower this value is, the less jobs of one domain can hog attention
+	 * from the jobs on other domains, though more overhead is incurred.
 	 * This should be lower than hpmaxdelay.
 	 * @var integer
 	 */
@@ -53,8 +53,8 @@ abstract class RedisJobService {
 	public $lpMaxDelay = 600;
 	/**
 	 * The maxtime parameter for runJobs.php for high priority jobs.
-	 * The lower this value is, the less jobs of one wiki/type can hog attention
-	 * from jobs of another wiki/type, though more overhead is incurred.
+	 * The lower this value is, the less jobs of one domain/type can hog attention
+	 * from jobs of another domain/type, though more overhead is incurred.
 	 * This should be lower than lpmaxdelay.
 	 * @var integer
 	 */
@@ -203,26 +203,12 @@ abstract class RedisJobService {
 	}
 
 	/**
-	 * @return string (per JobQueueAggregatorRedis.php)
-	 */
-	public function getQueueTypesKey() {
-		return "jobqueue:aggregator:h-queue-types:v2"; // global
-	}
-
-	/**
-	 * @return string
-	 */
-	public function getWikiSetKey() {
-		return "jobqueue:aggregator:s-wikis:v2"; // global
-	}
-
-	/**
 	 * @param string $type
-	 * @param string $wiki
+	 * @param string $domain
 	 * @return string (per JobQueueAggregatorRedis.php)
 	 */
-	public function encQueueName( $type, $wiki ) {
-		return rawurlencode( $type ) . '/' . rawurlencode( $wiki );
+	public function encQueueName( $type, $domain ) {
+		return rawurlencode( $type ) . '/' . rawurlencode( $domain );
 	}
 
 	/**
@@ -230,9 +216,9 @@ abstract class RedisJobService {
 	 * @return string (per JobQueueAggregatorRedis.php)
 	 */
 	public function dencQueueName( $name ) {
-		list( $type, $wiki ) = explode( '/', $name, 2 );
+		list( $type, $domain ) = explode( '/', $name, 2 );
 
-		return array( rawurldecode( $type ), rawurldecode( $wiki ) );
+		return array( rawurldecode( $type ), rawurldecode( $domain ) );
 	}
 
 	/**

@@ -10,15 +10,8 @@ require( __DIR__ . '/src/RedisJobService.php' );
 RedisJobService::checkEnvironment();
 
 class RedisJobChronService extends RedisJobService {
-	const HOT_QUEUE_TTL = 1800; // TTL on queue hotness
-	const COLD_QUEUE_FACTOR = 10; // check non-hot queues 1/X times
 	const LUA_WAIT_US = 5000; // time to wait between LUA scripts
-	const SYNC_DELAY = 10; // min time between syncAggregatorRegistry()
-
-	/** @var integer[] Map of (encoded queue name => UNIX timestamp) */
-	private $hotQueueMap = array();
-	/** @var integer Number of executePeriodicTasks() calls completed */
-	private $periodicTaskRounds = 0;
+	const PERIOD_WAIT_US = 1e6; // time between task runs
 
 	/**
 	 * Entry point method that starts the service in earnest and keeps running
@@ -40,23 +33,17 @@ class RedisJobChronService extends RedisJobService {
 			throw new Exception( 'Could not install singal handlers.' );
 		}
 
-		$lastSyncTime = 0;
+		usleep( mt_rand( 0, self::PERIOD_WAIT_US ) ); // run out of phase immediately
+
 		$memLast = memory_get_usage();
 		$this->incrStats( "start-chron.$host", 1 );
 		while ( true ) {
 			pcntl_signal_dispatch();
 
-			if ( ( time() - $lastSyncTime ) > self::SYNC_DELAY ) {
-				$lastSyncTime = time();
-				$count = $this->syncAggregatorRegistry();
-				$this->notice( "Synced $count aggregator(s) to the current one." );
-				$this->incrStats( "periodictasks.sync.$host", 1 );
-			}
-
 			$count = $this->executePeriodicTasks();
 			$this->notice( "Updated the state of $count job(s) (recycle/undelay/abandon)." );
 
-			sleep( 1 );
+			usleep( self::PERIOD_WAIT_US );
 
 			// Track memory usage
 			$memCurrent = memory_get_usage();
@@ -67,55 +54,9 @@ class RedisJobChronService extends RedisJobService {
 	}
 
 	/**
-	 * Merge wiki and queue type registration data into all aggregators
-	 *
-	 * This makes sure that the data is not lost on aggregator failure
-	 *
-	 * @return integer Servers fully updated
-	 */
-	private function syncAggregatorRegistry() {
-		$count = count( $this->aggrSrvs );
-
-		try {
-			$types = $this->redisCmdHA(
-				$this->aggrSrvs,
-				'hGetAll',
-				array( $this->getQueueTypesKey() )
-			);
-			if ( $types ) {
-				$okCount = $this->redisCmdBroadcast(
-					$this->aggrSrvs,
-					'hMSet',
-					array( $this->getQueueTypesKey(), $types )
-				);
-				$count = min( $count, $okCount );
-			}
-
-			$wikis = $this->redisCmdHA(
-				$this->aggrSrvs,
-				'sMembers',
-				array( $this->getWikiSetKey() )
-			);
-			if ( $wikis ) {
-				$okCount = $this->redisCmdBroadcast(
-					$this->aggrSrvs,
-					'sAdd',
-					array_merge( array( $this->getWikiSetKey() ), $wikis )
-				);
-				$count = min( $count, $okCount );
-			}
-		} catch ( RedisExceptionHA $e ) {
-			$count = 0;
-		}
-
-		return $count;
-	}
-
-	/**
-	 * Recycle or destroy any jobs that have been claimed for too long
-	 * and release any ready delayed jobs into the queue. Also abandon
-	 * and prune out jobs that failed too many times. This updates the
-	 * aggregator server as necessary.
+	 * Recycle or destroy any jobs that have been claimed for too long and release any ready
+	 * delayed jobs into the queue. Also abandon and prune out jobs that failed too many times.
+	 * Finally, this updates the aggregator server as necessary.
 	 *
 	 * @return int|bool Number of jobs recycled/deleted/undelayed/abandoned (false if not run)
 	 */
@@ -136,59 +77,35 @@ class RedisJobChronService extends RedisJobService {
 
 			$this->incrStats( "periodictasks.claimed.$host", 1 );
 
-			$types = $this->redisCmdHA(
-				$this->aggrSrvs,
-				'hKeys',
-				array( $this->getQueueTypesKey() )
-			);
-			$wikiIds = $this->redisCmdHA(
-				$this->aggrSrvs,
-				'sMembers',
-				array( $this->getWikiSetKey() )
-			);
+			// Job queue partition servers
+			$qServers = $this->queueSrvs;
+			// Randomize to scale the liveliness with the # of runners
+			shuffle( $qServers );
 
-			if ( is_array( $types ) && is_array( $wikiIds ) ) {
-				// Job queue partition servers
-				$qServers = $this->queueSrvs;
-				// Randomize to scale the liveliness with the # of runners
-				shuffle( $types );
-				shuffle( $wikiIds );
-				shuffle( $qServers );
-
-				// Build up the script arguments for each queue
-				// using an Iterator to avoid client OOMs...
-				$paramsByQueue = new AppendIterator();
-				foreach ( $types as $type ) {
-					$paramsByQueue->append( new PeriodicScriptParamsIterator(
-						$type,
-						$wikiIds,
-						$this->getTTLForType( $type ),
-						$this->getAttemptsForType( $type )
-					) );
+			// Track queues that become "ready"
+			$aggrMap = array( '_epoch' => time() ); // map of (queue name => timestamp)
+			// Run the chron script on each job queue partition server...
+			foreach ( $qServers as $qServer ) {
+				if ( !$this->updatePartitionQueueServer( $qServer, $aggrMap, $jobs, $lockKey ) ) {
+					$this->incrStats( "periodictasks.partition-failed.$qServer", 1 );
+					$ok = false;
 				}
-
-				// Track queues that become "ready"
-				$mapSet = array(); // map of (queue name => timestamp)
-				// Run the script on all job queue partitions...
-				foreach ( $qServers as $qServer ) {
-					$ok = $this->updateQueueServer(
-						$qServer, $paramsByQueue, $mapSet, $jobs, $lockKey
-					) && $ok;
-				}
-				// Update the map in the aggregator as queues become ready
-				$this->redisCmdHA(
-					$this->aggrSrvs,
-					'hMSet',
-					array( $this->getReadyQueueKey(), $mapSet )
-				);
-			} else {
-				$ok = false;
 			}
+			// Update the map in the aggregator as queues become ready or empty.
+			// Brief race conditions get fixed within seconds by the next runs.
+			$this->redisCmdHA(
+				$this->aggrSrvs,
+				'hMSet',
+				array( "{$this->getReadyQueueKey()}:temp", $aggrMap )
+			);
+			$this->redisCmdHA(
+				$this->aggrSrvs,
+				'rename',
+				array( "{$this->getReadyQueueKey()}:temp", $this->getReadyQueueKey() )
+			);
 
 			// Release the pool lock
 			$this->poolUnlock( $lockKey );
-
-			++$this->periodicTaskRounds;
 		} catch ( RedisExceptionHA $e ) {
 			$ok = false;
 		}
@@ -204,55 +121,48 @@ class RedisJobChronService extends RedisJobService {
 	}
 
 	/**
-	 * @param string $qServer
-	 * @param Iterator $paramsByQueue PeriodicScriptParamsIterator conforming generator
-	 * @param array $mapSet Map of (queue name => timestamp)
+	 * @param string $qServer Redis host
+	 * @param array $aggrMap Map of (queue name => timestamp)
 	 * @param integer $jobs
 	 * @param string $lockKey
 	 * @return bool
 	 */
-	private function updateQueueServer(
-		$qServer, Iterator $paramsByQueue, array &$mapSet, &$jobs, $lockKey
-	) {
+	private function updatePartitionQueueServer( $qServer, array &$aggrMap, &$jobs, $lockKey ) {
+		$qConn = $this->getRedisConn( $qServer );
+		if ( !$qConn ) {
+			return false; // partition down
+		}
+
+		// Get the list of queues with non-abandoned jobs
+		try {
+			$queueIds = $this->redisCmd(
+				$qConn,
+				'sMembers',
+				array( 'global:jobqueue:s-queuesWithJobs' )
+			);
+		} catch ( RedisException $e ) {
+			$this->handleRedisError( $e, $qServer );
+			return false;
+		}
+
+		// Build up per-queue script arguments using an Iterator to avoid client OOMs...
+		shuffle( $queueIds ); // equal priority
+		$paramsByQueue = new PeriodicScriptParamsIterator( $this, $queueIds );
+
 		$ok = true;
-
-		$allQueuesScanned = ( $this->periodicTaskRounds > 1 );
-
 		$queuesChecked = 0;
 		$scriptLoaded = false; // load LUA script only once per server round
 		foreach ( $paramsByQueue as $params ) {
-			list( $qType, $qWiki ) = $params['queue'];
-			$encQueue = $this->encQueueName( $qType, $qWiki );
-			if ( $allQueuesScanned
-				&& !isset( $this->hotQueueMap[$encQueue] )
-				&& mt_rand( 1, self::COLD_QUEUE_FACTOR ) != 1
-			) {
-				$this->debug( "Skipped non-hot queue '$qType/$qWiki'." );
-				continue; // non-hot queues are ignored most rounds
-			}
-
-			$affected = 0;
-			$paramsByQueueBatch = array( $params ); // batches of 1
-			$ok = $this->updateQueueServerChunk(
-				$qServer, $paramsByQueueBatch, $mapSet, $affected, $scriptLoaded
-			) && $ok;
+			// Run periodic updates on this partition of this queue
+			$affected = $this->updatePartitionQueue( $qServer, $params, $aggrMap, $scriptLoaded );
+			$ok = $ok && ( $affected !== false );
 
 			usleep( self::LUA_WAIT_US ); // avoid CPU hogging
 
-			if ( $affected > 0 ) {
-				$this->hotQueueMap[$encQueue] = time();
-				$this->debug( "Listed hot queue '$qType/$qWiki." );
-			} elseif ( isset( $this->hotQueueMap[$encQueue] )
-				&& ( time() - $this->hotQueueMap[$encQueue] ) > self::HOT_QUEUE_TTL
-			)  {
-				unset( $this->hotQueueMap[$encQueue] );
-				$this->debug( "Delisted non-hot queue '$qType/$qWiki'." );
-			}
-
-			$jobs += $affected;
+			$jobs += (int)$affected;
 
 			// Don't let the pool lock expire mid-run
-			if ( ++$queuesChecked % 100 == 0 ) {
+			if ( ( ++$queuesChecked % 100 ) == 0 ) {
 				$this->poolRefreshLock( $lockKey );
 			}
 		}
@@ -261,69 +171,58 @@ class RedisJobChronService extends RedisJobService {
 	}
 
 	/**
-	 * @param string $qServer
-	 * @param array $paramsByQueue Chunk of results from PeriodicScriptParamsIterator
-	 * @param array $mapSet Map of (queue name => timestamp)
-	 * @param integer $jobs
+	 * @param string $qServer Redis host
+	 * @param array $params A single value from PeriodicScriptParamsIterator
+	 * @param array $aggrMap Map of (queue name => timestamp)
 	 * @param bool $scriptLoaded
-	 * @return bool
+	 * @return int|bool Affected jobs or false on failure
 	 */
-	private function updateQueueServerChunk(
-		$qServer, array $paramsByQueue, array &$mapSet, &$jobs, &$scriptLoaded
+	private function updatePartitionQueue(
+		$qServer, array $params, array &$aggrMap, &$scriptLoaded
 	) {
-		$host = gethostname();
-
 		$qConn = $this->getRedisConn( $qServer );
 		if ( !$qConn ) {
-			$this->incrStats( "periodictasks.failed.$host", count( $paramsByQueue ) );
 			return false; // partition down
 		}
 
-		// Load the LUA script into memory if needed
-		$script = PeriodicScriptParamsIterator::getChronScript();
-		if ( $scriptLoaded ) {
-			$sha1 = sha1( $script );
-		} else {
-			$sha1 = $this->redisCmd( $qConn, 'script', array( 'load', $script ) );
-			$scriptLoaded = true;
-		}
-
-		$failed = 0;
 		try {
-			$this->redisCmd( $qConn, 'multi', array( Redis::PIPELINE ) );
-			foreach ( $paramsByQueue as $params ) {
-				$this->redisCmd( $qConn, 'evalSha',
-					array( $sha1, $params['params'], $params['keys'] ) );
+			// Load the LUA script into memory if needed
+			$script = PeriodicScriptParamsIterator::getChronScript();
+			if ( $scriptLoaded ) {
+				$sha1 = sha1( $script );
+			} else {
+				$sha1 = $this->redisCmd( $qConn, 'script', array( 'load', $script ) );
+				$scriptLoaded = true;
 			}
-			$res = $this->redisCmd( $qConn, 'exec' );
 
-			$now = time();
-			foreach ( $res as $i => $result ) {
-				if ( !$result ) {
-					++$failed;
-					continue;
-				}
-				list( $qType, $qWiki ) = $paramsByQueue[$i]['queue'];
+			$result = $this->redisCmd(
+				$qConn,
+				'evalSha',
+				array( $sha1, $params['params'], $params['keys'] )
+			);
+
+			if ( $result ) {
+				list( $qType, $qDomain ) = $params['queue'];
 				list( $released, $abandoned, $pruned, $undelayed, $ready ) = $result;
-				if ( $released > 0 || $undelayed > 0 || $ready > 0 ) {
+				if ( $ready > 0 ) {
 					// This checks $ready to handle lost aggregator updates as well as
 					// to merge after network partitions that caused aggregator fail-over.
-					$mapSet[$this->encQueueName( $qType, $qWiki )] = $now;
+					$aggrMap[$this->encQueueName( $qType, $qDomain )] = time();
 				}
-				$jobs += ( array_sum( $result ) - $ready );
+				$affectedJobs = ( array_sum( $result ) - $ready );
 				$this->incrStats( "job-recycle.$qType", $released );
 				$this->incrStats( "job-abandon.$qType", $abandoned );
 				$this->incrStats( "job-undelay.$qType", $undelayed );
 				$this->incrStats( "job-prune.$qType", $pruned );
+			} else {
+				$affectedJobs = false;
 			}
 		} catch ( RedisException $e ) {
-			$failed += count( $paramsByQueue );
+			$affectedJobs = false;
 			$this->handleRedisError( $e, $qServer );
 		}
 
-		$this->incrStats( "periodictasks.failed.$host", $failed );
-
-		return ( $failed == 0 );
+		return $affectedJobs;
 	}
 
 	/**
@@ -369,7 +268,7 @@ class RedisJobChronService extends RedisJobService {
 	 * @param string $type Queue type
 	 * @return integer Seconds
 	 */
-	protected function getTTLForType( $type ) {
+	public function getTTLForType( $type ) {
 		return isset( $this->claimTTLMap[$type] )
 			? $this->claimTTLMap[$type]
 			: $this->claimTTLMap['*'];
@@ -379,7 +278,7 @@ class RedisJobChronService extends RedisJobService {
 	 * @param string $type Queue type
 	 * @return integer
 	 */
-	protected function getAttemptsForType( $type ) {
+	public function getAttemptsForType( $type ) {
 		return isset( $this->attemptsMap[$type] )
 			? $this->attemptsMap[$type]
 			: $this->attemptsMap['*'];
@@ -387,63 +286,63 @@ class RedisJobChronService extends RedisJobService {
 }
 
 class PeriodicScriptParamsIterator implements Iterator {
-	private $type;
-	private $domains;
-	private $claimTTL;
-	private $maxAttempts;
+	/** @var RedisJobChronService */
+	private $service;
+	/** @var string[] JSON encoded queue name list */
+	private $queueIds;
 
 	/**
-	 * @param string $type Queue/job type
-	 * @param array $domains Domain IDs
-	 * @param integer $claimTTL Claim TTL
-	 * @param integer $maxAttempts Max job attempts
+	 * @param RedisJobChronService $service
+	 * @param array $queueIds JSON encoded queue name list (type, domain)
 	 */
-	public function __construct( $type, array $domains, $claimTTL, $maxAttempts ) {
-		$this->type = $type;
-		$this->domains = $domains;
-		$this->claimTTL = $claimTTL;
-		$this->maxAttempts = $maxAttempts;
+	public function __construct( RedisJobChronService $service, array $queueIds ) {
+		$this->service = $service;
+		$this->queueIds = $queueIds;
 	}
 
 	function rewind() {
-		reset( $this->domains );
+		reset( $this->queueIds );
 	}
 
 	function current() {
-		$domain = current( $this->domains );
-		if ( $domain === false ) {
+		$queueId = current( $this->queueIds );
+		if ( $queueId === false ) {
 			return false;
 		}
+
+		list( $type, $domain ) = json_decode( $queueId );
 		$now = time();
 
 		return array(
-			'queue'  => array( $this->type, $domain ),
+			'queue' => array( $type, $domain ),
 			'params' => array(
-				"{$domain}:jobqueue:{$this->type}:z-claimed", # KEYS[1]
-				"{$domain}:jobqueue:{$this->type}:h-attempts", # KEYS[2]
-				"{$domain}:jobqueue:{$this->type}:l-unclaimed", # KEYS[3]
-				"{$domain}:jobqueue:{$this->type}:h-data", # KEYS[4]
-				"{$domain}:jobqueue:{$this->type}:z-abandoned", # KEYS[5]
-				"{$domain}:jobqueue:{$this->type}:z-delayed", # KEYS[6]
-				$now - $this->claimTTL, # ARGV[1]
+				"{$domain}:jobqueue:{$type}:z-claimed", # KEYS[1]
+				"{$domain}:jobqueue:{$type}:h-attempts", # KEYS[2]
+				"{$domain}:jobqueue:{$type}:l-unclaimed", # KEYS[3]
+				"{$domain}:jobqueue:{$type}:h-data", # KEYS[4]
+				"{$domain}:jobqueue:{$type}:z-abandoned", # KEYS[5]
+				"{$domain}:jobqueue:{$type}:z-delayed", # KEYS[6]
+				"global:jobqueue:s-queuesWithJobs", # KEYS[7]
+				$now - $this->service->getTTLForType( $type ), # ARGV[1]
 				$now - 7 * 86400, # ARGV[2]
-				$this->maxAttempts, # ARGV[3]
-				$now # ARGV[4]
+				$this->service->getAttemptsForType( $type ), # ARGV[3]
+				$now, # ARGV[4]
+				$queueId, # ARGV[5]
 			),
-			'keys'   => 6 # number of first argument(s) that are keys
+			'keys' => 7 # number of first argument(s) that are keys
 		);
 	}
 
 	function key() {
-		return key( $this->domains );
+		return key( $this->queueIds );
 	}
 
 	function next() {
-		next( $this->domains );
+		next( $this->queueIds );
 	}
 
 	function valid() {
-		return key( $this->domains ) !== null;
+		return key( $this->queueIds ) !== null;
 	}
 
 	/**
@@ -452,11 +351,12 @@ class PeriodicScriptParamsIterator implements Iterator {
 	public static function getChronScript() {
 		static $script =
 		<<<LUA
-		local kClaimed, kAttempts, kUnclaimed, kData, kAbandoned, kDelayed = unpack(KEYS)
-		local rClaimCutoff, rPruneCutoff, rAttempts, rTime = unpack(ARGV)
+		local kClaimed, kAttempts, kUnclaimed, kData, kAbandoned, kDelayed, kQwJobs = unpack(KEYS)
+		local rClaimCutoff, rPruneCutoff, rAttempts, rTime, queueId = unpack(ARGV)
 		local released,abandoned,pruned,undelayed,ready = 0,0,0,0,0
 		-- Short-circuit if there is nothing at all in the queue
 		if redis.call('exists',kData) == 0 then
+			redis.call('sRem',kQwJobs,queueId)
 			return {released,abandoned,pruned,undelayed,ready}
 		end
 		-- Get all non-dead jobs that have an expired claim on them.
@@ -495,6 +395,13 @@ class PeriodicScriptParamsIterator implements Iterator {
 		end
 		undelayed = #ids
 		ready = redis.call('lLen',kUnclaimed)
+		-- Keep track of whether this queue has jobs
+		local aliveCount = ready + redis.call('zCard',kClaimed) + redis.call('zCard',kDelayed)
+		if aliveCount > 0 then
+			redis.call('sAdd',kQwJobs,queueId)
+		else
+			redis.call('sRem',kQwJobs,queueId)
+		end
 		return {released,abandoned,pruned,undelayed,ready}
 LUA;
 

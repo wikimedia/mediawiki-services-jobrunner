@@ -119,7 +119,7 @@ class RedisJobRunnerService extends RedisJobService {
 	}
 
 	/**
-	 * @return array Cached map of (job type => wiki => UNIX timestamp)
+	 * @return array Cached map of (job type => domain => UNIX timestamp)
 	 */
 	private function &getReadyQueueMap() {
 		static $pendingDBs = array(); // cache
@@ -147,7 +147,7 @@ class RedisJobRunnerService extends RedisJobService {
 	}
 
 	/**
-	 * @return array Map of (job type => wiki => UNIX timestamp); false on error
+	 * @return array Map of (job type => domain => UNIX timestamp); false on error
 	 */
 	private function loadReadyQueueMap() {
 		$pendingByType = false;
@@ -163,8 +163,8 @@ class RedisJobRunnerService extends RedisJobService {
 				unset( $map['_epoch'] );
 				$pendingByType = array();
 				foreach ( $map as $key => $time ) {
-					list( $type, $wiki ) = $this->dencQueueName( $key );
-					$pendingByType[$type][$wiki] = $time;
+					list( $type, $domain ) = $this->dencQueueName( $key );
+					$pendingByType[$type][$domain] = $time;
 				}
 			}
 		} catch ( RedisExceptionHA $e ) {
