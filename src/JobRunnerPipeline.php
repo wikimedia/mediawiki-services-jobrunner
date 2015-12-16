@@ -7,7 +7,7 @@ class JobRunnerPipeline {
 	protected $procMap = array();
 
 	/**
-	 * @param JobRunnerService $service
+	 * @param RedisJobService $service
 	 */
 	public function __construct( RedisJobService $service ) {
 		$this->srvc = $service;
