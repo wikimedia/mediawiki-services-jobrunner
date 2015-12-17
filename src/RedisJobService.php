@@ -4,6 +4,8 @@
  * Base class for job services with main() implemented by subclasses
  */
 abstract class RedisJobService {
+	const MAX_UDP_SIZE_STR = 512;
+
 	/** @var array List of IP:<port> entries */
 	protected $queueSrvs = array();
 	/** @var array List of IP:<port> entries */
@@ -12,6 +14,8 @@ abstract class RedisJobService {
 	protected $password;
 	/** @var string IP address or hostname */
 	protected $statsdHost;
+	/** @var array statsd packets pending sending */
+	private $statsdPackets = array();
 	/** @var integer Port number */
 	protected $statsdPort;
 
@@ -375,10 +379,77 @@ abstract class RedisJobService {
 		if ( !$this->statsdHost || $delta == 0 ) {
 			return; // nothing to do
 		}
+		$this->statsdPackets[] = $this->getStatPacket( $event, $delta );
+	}
 
-		static $format = "%s:%s|c\n";
-		$packet = sprintf( $format, "jobrunner.$event", $delta );
+	/**
+	 * @param string $event
+	 * @param integer $delta
+	 *
+	 * @return string
+	 */
+	private function getStatPacket( $event, $delta ) {
+		return sprintf( "%s:%s|c\n", "jobrunner.$event", $delta );
+	}
 
+	/**
+	 * Actually send the stats that have been saved in $this->statsdPackets
+	 */
+	protected function sendStats() {
+		if ( $this->statsdHost ) {
+			$packets = array_reduce(
+				$this->statsdPackets,
+				[ __CLASS__, 'reduceStatPackets' ],
+				array()
+			);
+			foreach ( $packets as $packet ) {
+				$this->sendStatsPacket( $packet );
+			}
+		}
+		$this->statsdPackets = array();
+	}
+
+	/**
+	 * This is called from this->sendStats()
+	 *
+	 * This is taken from StatsdClient::doReduce in https://github.com/liuggio/statsd-php-client
+	 * @license MIT
+	 * @copyright (c) Giulio De Donato
+	 *
+	 * This function reduces the number of packets,the reduced has the maximum dimension of self::MAX_UDP_SIZE_STR
+	 * Reference:
+	 * https://github.com/etsy/statsd/blob/master/README.md
+	 * All metrics can also be batch send in a single UDP packet, separated by a newline character.
+	 *
+	 * @param string[] $reducedMetrics
+	 * @param string $metric
+	 *
+	 * @return string[]
+	 */
+	private static function reduceStatPackets( array $reducedMetrics, $metric ) {
+		$lastReducedMetric = end( $reducedMetrics );
+		if ( strlen( $metric ) >= self::MAX_UDP_SIZE_STR || $lastReducedMetric === false ) {
+			$reducedMetrics[] = $metric; // full packet sized metric or first metric
+		} else {
+			$newMetric = "$lastReducedMetric\n$metric";
+			if ( strlen( $newMetric ) > self::MAX_UDP_SIZE_STR ) {
+				// Merging into the last metric yields too large a packet
+				$reducedMetrics[] = $metric;
+			} else {
+				// Merge this metric into the last one since the packet size is OK
+				array_pop( $reducedMetrics );
+				$reducedMetrics[] = $newMetric;
+			}
+		}
+
+		return $reducedMetrics;
+	}
+
+	/**
+	 * @param string $packet
+	 * @return void
+	 */
+	private function sendStatsPacket( $packet ) {
 		if ( !function_exists( 'socket_create' ) ) {
 			$this->debug( 'No "socket_create" method available.' );
 			return;

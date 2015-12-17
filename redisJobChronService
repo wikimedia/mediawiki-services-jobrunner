@@ -51,6 +51,7 @@ class RedisJobChronService extends RedisJobService {
 			$memCurrent = memory_get_usage();
 			$this->debug( "Memory usage: $memCurrent bytes." );
 			$this->incrStats( "memory.$host", $memCurrent - $memLast );
+			$this->sendStats();
 			$memLast = $memCurrent;
 		}
 	}
