@@ -41,7 +41,9 @@ class RedisJobChronService extends RedisJobService {
 			pcntl_signal_dispatch();
 
 			$count = $this->executePeriodicTasks();
-			$this->notice( "Updated the state of $count job(s) (recycle/undelay/abandon)." );
+			if ( $count ) {
+				$this->notice( "Updated the state of $count job(s) (recycle/undelay/abandon)." );
+			}
 
 			usleep( self::PERIOD_WAIT_US );
 
