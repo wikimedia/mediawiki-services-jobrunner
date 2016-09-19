@@ -404,7 +404,7 @@ abstract class RedisJobService {
 	 */
 	public function debug( $s ) {
 		if ( $this->verbose ) {
-			print date( DATE_ISO8601 ) . ": $s\n";
+			print date( DATE_ISO8601 ) . " DEBUG: $s\n";
 		}
 	}
 
@@ -412,14 +412,14 @@ abstract class RedisJobService {
 	 * @param string $s
 	 */
 	public function notice( $s ) {
-		print date( DATE_ISO8601 ) . ": $s\n";
+		print date( DATE_ISO8601 ) . " NOTICE: $s\n";
 	}
 
 	/**
 	 * @param string $s
 	 */
 	public function error( $s ) {
-		fwrite( STDERR, date( DATE_ISO8601 ) . ": $s\n" );
+		fwrite( STDERR, date( DATE_ISO8601 ) . " ERROR: $s\n" );
 	}
 }
 
