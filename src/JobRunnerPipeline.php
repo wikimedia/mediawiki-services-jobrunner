@@ -92,7 +92,14 @@ class JobRunnerPipeline {
 						   json_last_error(), json_last_error_msg());
 					}
 					$cmd = $procSlot['cmd'];
-					$error = $procSlot['stderr'] ?: $procSlot['stdout'];
+					if ( $procSlot['stderr'] ) {
+						$error = $procSlot['stderr'];
+						$cmd .= ' STDERR:';
+					} else {
+						$error = $procSlot['stdout'];
+						$cmd .= ' STDOUT:';
+					}
+
 					if ( strlen( $error ) > 4096 ) { // truncate long errors
 						$error = mb_substr( $error, 0, 4096 ) . '...';
 					}
