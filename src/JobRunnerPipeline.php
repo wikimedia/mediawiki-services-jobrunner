@@ -86,13 +86,18 @@ class JobRunnerPipeline {
 					$this->srvc->incrStats( "pop.{$procSlot['type']}.failed.{$host}", $failed );
 				} else {
 					// Mention any serious errors that may have occured
+					$extraMessage = '';
+					if ( $result === null ) {
+						$extraMessage = sprintf("json_decode() error (%s): %s\n",
+						   json_last_error(), json_last_error_msg());
+					}
 					$cmd = $procSlot['cmd'];
 					$error = $procSlot['stderr'] ?: $procSlot['stdout'];
 					if ( strlen( $error ) > 4096 ) { // truncate long errors
 						$error = mb_substr( $error, 0, 4096 ) . '...';
 					}
 					$this->srvc->error( "Runner loop $loop process in slot $slot " .
-						"gave status '{$status['exitcode']}':\n$cmd\n\t$error" );
+						"gave status '{$status['exitcode']}':\n$extraMessage$cmd\n\t$error" );
 					$this->srvc->incrStats( 'runner-status.error', 1 );
 				}
 				$this->closeRunner( $loop, $slot, $procSlot );
