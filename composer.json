@@ -22,7 +22,7 @@
 	},
 	"scripts": {
 		"test": [
-			"parallel-lint . --exclude vendor"
+			"parallel-lint redisJobChronService redisJobRunnerService . --exclude vendor"
 		]
 	}
 }
