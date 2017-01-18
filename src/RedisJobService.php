@@ -71,7 +71,7 @@ abstract class RedisJobService {
 
 	/**
 	 * @param array $args
-	 * @return RedisJobRunnerService
+	 * @return RedisJobService
 	 * @throws Exception
 	 */
 	public static function init( array $args ) {
