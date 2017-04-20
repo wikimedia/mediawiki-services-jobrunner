@@ -10,7 +10,7 @@ require( __DIR__ . '/src/RedisJobService.php' );
 RedisJobService::checkEnvironment();
 
 class RedisJobChronService extends RedisJobService {
-	const LUA_WAIT_US = 5000; // time to wait between LUA scripts
+	const LUA_WAIT_US = 5000; // time to wait between Lua scripts
 	const PERIOD_WAIT_US = 1e6; // time between task runs
 
 	/**
@@ -294,6 +294,8 @@ class PeriodicScriptParamsIterator implements Iterator {
 	/** @var string[] JSON encoded queue name list */
 	private $queueIds;
 
+	const LUA_MAX_JOBS = 500; // limit on the number of jobs to change state in a Lua script
+
 	/**
 	 * @param RedisJobChronService $service
 	 * @param array $queueIds JSON encoded queue name list (type, domain)
@@ -331,6 +333,7 @@ class PeriodicScriptParamsIterator implements Iterator {
 				$this->service->getAttemptsForType( $type ), # ARGV[3]
 				$now, # ARGV[4]
 				$queueId, # ARGV[5]
+				self::LUA_MAX_JOBS # ARGV[6]
 			),
 			'keys' => 7 # number of first argument(s) that are keys
 		);
@@ -355,7 +358,7 @@ class PeriodicScriptParamsIterator implements Iterator {
 		static $script =
 		<<<LUA
 		local kClaimed, kAttempts, kUnclaimed, kData, kAbandoned, kDelayed, kQwJobs = unpack(KEYS)
-		local rClaimCutoff, rPruneCutoff, rAttempts, rTime, queueId = unpack(ARGV)
+		local rClaimCutoff, rPruneCutoff, rAttempts, rTime, queueId, rLimit = unpack(ARGV)
 		local released,abandoned,pruned,undelayed,ready = 0,0,0,0,0
 		-- Short-circuit if there is nothing at all in the queue
 		if redis.call('exists',kData) == 0 then
@@ -364,7 +367,7 @@ class PeriodicScriptParamsIterator implements Iterator {
 		end
 		-- Get all non-dead jobs that have an expired claim on them.
 		-- The score for each item is the last claim timestamp (UNIX).
-		local staleClaims = redis.call('zRangeByScore',kClaimed,0,rClaimCutoff)
+		local staleClaims = redis.call('zRangeByScore',kClaimed,0,rClaimCutoff,'limit',0,rLimit)
 		for k,id in ipairs(staleClaims) do
 			local timestamp = redis.call('zScore',kClaimed,id)
 			local attempts = 1*redis.call('hGet',kAttempts,id)
@@ -381,7 +384,7 @@ class PeriodicScriptParamsIterator implements Iterator {
 		end
 		-- Get all of the dead jobs that have been marked as dead for too long.
 		-- The score for each item is the last claim timestamp (UNIX).
-		local deadClaims = redis.call('zRangeByScore',kAbandoned,0,rPruneCutoff)
+		local deadClaims = redis.call('zRangeByScore',kAbandoned,0,rPruneCutoff,'limit',0,rLimit)
 		for k,id in ipairs(deadClaims) do
 			-- Stale and out of attempts: remove any traces of the job
 			redis.call('zRem',kAbandoned,id)
@@ -390,7 +393,7 @@ class PeriodicScriptParamsIterator implements Iterator {
 			pruned = pruned + 1
 		end
 		-- Get the list of ready delayed jobs, sorted by readiness (UNIX timestamp)
-		local ids = redis.call('zRangeByScore',kDelayed,0,rTime)
+		local ids = redis.call('zRangeByScore',kDelayed,0,rTime,'limit',0,rLimit)
 		-- Migrate the jobs from the "delayed" set to the "unclaimed" list
 		for k,id in ipairs(ids) do
 			redis.call('lPush',kUnclaimed,id)
