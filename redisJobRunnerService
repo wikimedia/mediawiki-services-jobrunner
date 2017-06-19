@@ -31,7 +31,7 @@ class RedisJobRunnerService extends RedisJobService {
 		$handlerFunc = function( $signo ) use ( $pipeline ) {
 			print "Caught signal ($signo)\n";
 			$pipeline->terminateSlots();
-			exit( 128 + $signo );
+			exit( 0 );
 		};
 		$ok = pcntl_signal( SIGHUP, $handlerFunc )
 			&& pcntl_signal( SIGINT, $handlerFunc )

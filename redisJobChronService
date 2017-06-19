@@ -24,7 +24,7 @@ class RedisJobChronService extends RedisJobService {
 		// Setup signal handlers...
 		$handlerFunc = function( $signo ) {
 			print "Caught signal ($signo)\n";
-			exit( 128 + $signo );
+			exit( 0 );
 		};
 		$ok = pcntl_signal( SIGHUP, $handlerFunc )
 			&& pcntl_signal( SIGINT, $handlerFunc )
