@@ -267,7 +267,7 @@ class RedisJobChronService extends RedisJobService {
      * @throws RedisExceptionHA
 	 */
 	private function poolUnlock( string $key ) : bool {
-		return (bool)$this->redisCmdHA( $this->aggrSrvs, 'delete', [ $key ] );
+		return (bool)$this->redisCmdHA( $this->aggrSrvs, 'del', [ $key ] );
 	}
 
 	/**
