@@ -4,7 +4,7 @@ class JobRunnerPipeline {
 	/** @var RedisJobService */
 	protected $srvc;
 	/** @var array (loop ID => slot ID => slot status array) */
-	protected $procMap = array();
+	protected $procMap = [];
 
 	/**
 	 * @param RedisJobService $service
@@ -17,10 +17,10 @@ class JobRunnerPipeline {
 	 * @param string $loop
 	 * @param int $slot
 	 */
-	public function initSlot( $loop, $slot ) {
-		$this->procMap[$loop][$slot] = array(
+	public function initSlot( string $loop, int $slot ) {
+		$this->procMap[$loop][$slot] = [
 			'handle'  => false,
-			'pipes'   => array(),
+			'pipes'   => [],
 			'db'      => null,
 			'type'    => null,
 			'cmd'     => null,
@@ -28,7 +28,7 @@ class JobRunnerPipeline {
 			'sigtime' => 0,
 			'stdout' => '',
 			'stderr' => ''
-		);
+		];
 	}
 
 	/**
@@ -37,7 +37,7 @@ class JobRunnerPipeline {
 	 * @param array $pending
 	 * @return array
 	 */
-	public function refillSlots( $loop, array $prioMap, array &$pending ) {
+	public function refillSlots( int $loop, array $prioMap, array &$pending ) : array {
 		$free = 0;
 		$new = 0;
 		$host = gethostname();
@@ -60,11 +60,11 @@ class JobRunnerPipeline {
 						"[{$age}s; max: {$maxReal}s]:\n$cmd" );
 					posix_kill( $status['pid'], SIGTERM ); // non-blocking
 					$procSlot['sigtime'] = time();
-					$this->srvc->incrStats( 'runner-status.timeout', 1 );
+					$this->srvc->incrStats( 'runner-status.timeout' );
 				} elseif ( $age >= $maxReal && ( $cTime - $procSlot['sigtime'] ) > 5 ) {
 					$this->srvc->error( "Runner loop $loop process in slot $slot sent SIGKILL." );
 					$this->closeRunner( $loop, $slot, $procSlot, SIGKILL );
-					$this->srvc->incrStats( 'runner-status.kill', 1 );
+					$this->srvc->incrStats( 'runner-status.kill' );
 				} else {
 					continue; // slot is busy
 				}
@@ -105,13 +105,13 @@ class JobRunnerPipeline {
 					}
 					$this->srvc->error( "Runner loop $loop process in slot $slot " .
 						"gave status '{$status['exitcode']}':\n$extraMessage$cmd\n\t$error" );
-					$this->srvc->incrStats( 'runner-status.error', 1 );
+					$this->srvc->incrStats( 'runner-status.error' );
 				}
 				$this->closeRunner( $loop, $slot, $procSlot );
 			} elseif ( !$status && $procSlot['handle'] ) {
 				$this->srvc->error( "Runner loop $loop process in slot $slot gave no status." );
 				$this->closeRunner( $loop, $slot, $procSlot );
-				$this->srvc->incrStats( 'runner-status.none', 1 );
+				$this->srvc->incrStats( 'runner-status.none' );
 			}
 			++$free;
 			$queue = $this->selectQueue( $loop, $prioMap, $pending );
@@ -125,7 +125,7 @@ class JobRunnerPipeline {
 		}
 		unset( $procSlot );
 
-		return array( $free, $new );
+		return [ $free, $new ];
 	}
 
 	/**
@@ -134,7 +134,7 @@ class JobRunnerPipeline {
 	 * @param array $pending
 	 * @return array|boolean
 	 */
-	protected function selectQueue( $loop, array $prioMap, array $pending ) {
+	protected function selectQueue( int $loop, array $prioMap, array $pending ) {
 		$include = $this->srvc->loopMap[$loop]['include'];
 		$exclude = $this->srvc->loopMap[$loop]['exclude'];
 		if ( $prioMap[$loop]['high'] ) {
@@ -146,15 +146,15 @@ class JobRunnerPipeline {
 			$include = array_merge( $include, array_keys( $pending ) );
 		}
 
-		$candidateTypes = array_diff( array_unique( $include ), $exclude, array( '*' ) );
+		$candidateTypes = array_diff( array_unique( $include ), $exclude, [ '*' ] );
 
-		$candidates = array(); // list of (type, db)
+		$candidates = []; // list of (type, db)
 		// Flatten the tree of candidates into a flat list so that a random
 		// item can be selected, weighing each queue (type/db tuple) equally.
 		foreach ( $candidateTypes as $type ) {
 			if ( isset( $pending[$type] ) ) {
 				foreach ( $pending[$type] as $db => $since ) {
-					$candidates[] = array( $type, $db );
+					$candidates[] = [ $type, $db ];
 				}
 			}
 		}
@@ -174,7 +174,7 @@ class JobRunnerPipeline {
 	 * @param array $procSlot
 	 * @return bool
 	 */
-	protected function spawnRunner( $loop, $slot, $highPrio, array $queue, array &$procSlot ) {
+	protected function spawnRunner( int $loop, int $slot, bool $highPrio, array $queue, array &$procSlot ) : bool {
 		// Pick a random queue
 		list( $type, $db ) = $queue;
 		$maxtime = $highPrio ? $this->srvc->lpMaxTime : $this->srvc->hpMaxTime;
@@ -184,7 +184,7 @@ class JobRunnerPipeline {
 
 		// Make sure the runner is launched with various time/memory limits.
 		// Nice the process so things like ssh and deployment scripts are fine.
-		$what = $with = array();
+		$what = $with = [];
 		foreach ( compact( 'db', 'type', 'maxtime', 'maxmem' ) as $k => $v ) {
 			$what[] = "%($k)u";
 			$with[] = rawurlencode( $v );
@@ -194,11 +194,11 @@ class JobRunnerPipeline {
 		// The dispatcher might be runJobs.php, curl, or wget
 		$cmd = str_replace( $what, $with, $this->srvc->dispatcher );
 
-		$descriptors = array(
-			0 => array( "pipe", "r" ), // stdin (child)
-			1 => array( "pipe", "w" ), // stdout (child)
-			2 => array( "pipe", "w" ) // stderr (child)
-		);
+		$descriptors = [
+			0 => [ "pipe", "r" ], // stdin (child)
+			1 => [ "pipe", "w" ], // stdout (child)
+			2 => [ "pipe", "w" ] // stderr (child)
+		];
 
 		$this->srvc->debug( "Spawning runner in loop $loop at slot $slot ($type, $db):\n\t$cmd." );
 
@@ -228,7 +228,7 @@ class JobRunnerPipeline {
 			return true;
 		} else {
 			$this->srvc->error( "Could not spawn process in loop $loop: $cmd" );
-			$this->srvc->incrStats( 'runner-status.error', 1 );
+			$this->srvc->incrStats( 'runner-status.error' );
 			return false;
 		}
 	}
@@ -237,9 +237,9 @@ class JobRunnerPipeline {
 	 * @param integer $loop
 	 * @param integer $slot
 	 * @param array $procSlot
-	 * @param integer $signal
+	 * @param int|null $signal
 	 */
-	protected function closeRunner( $loop, $slot, array &$procSlot, $signal = null ) {
+	protected function closeRunner( int $loop, int $slot, array &$procSlot, int $signal = null ) {
 		if ( $procSlot['pipes'] ) {
 			if ( $procSlot['pipes'][1] !== false ) {
 				fclose( $procSlot['pipes'][1] );
@@ -271,8 +271,8 @@ class JobRunnerPipeline {
 	}
 
 	public function terminateSlots() {
-		foreach ( $this->procMap as &$procSlots ) {
-			foreach ( $procSlots as &$procSlot ) {
+		foreach ( $this->procMap as $procSlots ) {
+			foreach ( $procSlots as $procSlot ) {
 				if ( !$procSlot['handle'] ) {
 					continue;
 				}

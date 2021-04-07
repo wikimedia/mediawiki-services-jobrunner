@@ -7,31 +7,31 @@ abstract class RedisJobService {
 	const MAX_UDP_SIZE_STR = 512;
 
 	/** @var array List of IP:<port> entries */
-	protected $queueSrvs = array();
+	protected $queueSrvs = [];
 	/** @var array List of IP:<port> entries */
-	protected $aggrSrvs = array();
+	protected $aggrSrvs = [];
 	/** @var string Redis password */
 	protected $password;
 	/** @var string IP address or hostname */
 	protected $statsdHost;
 	/** @var array statsd packets pending sending */
-	private $statsdPackets = array();
+	private $statsdPackets = [];
 	/** @var integer Port number */
 	protected $statsdPort;
 
 	/** @var bool */
 	protected $verbose;
 	/** @var array Map of (job type => integer seconds) */
-	protected $claimTTLMap = array();
+	protected $claimTTLMap = [];
 	/** @var array Map of (job type => integer) */
-	protected $attemptsMap = array();
+	protected $attemptsMap = [];
 
 	/** @var array Map of (id => (include,exclude,low-priority,count) */
-	public $loopMap = array();
+	public $loopMap = [];
 	/** @var array Map of (job type => integer) */
-	public $maxRealMap = array();
+	public $maxRealMap = [];
 	/** @var array Map of (job type => integer) */
-	public $maxMemMap = array();
+	public $maxMemMap = [];
 	/** @var array String command to run jobs and return the status JSON blob */
 	public $dispatcher;
 
@@ -65,19 +65,21 @@ abstract class RedisJobService {
 	public $hpMaxTime = 30;
 
 	/** @var array Map of (server => Redis object) */
-	protected $conns = array();
+	protected $conns = [];
 	/** @var array Map of (server => timestamp) */
-	protected $downSrvs = array();
+	protected $downSrvs = [];
+	/** @var mixed */
+	private $wrapper;
 
 	/**
 	 * @param array $args
 	 * @return RedisJobService
 	 * @throws Exception
 	 */
-	public static function init( array $args ) {
+	public static function init( array $args ) : RedisJobService {
 		if ( !isset( $args['config-file'] ) || isset( $args['help'] ) ) {
-			die( "Usage: php RedisJobRunnerService.php\n"
-				. "--config-file=<path>\n"
+			throw new FatalError( "Usage: php RedisJobRunnerService.php\n"
+				. "--config-file=[path]\n"
 				. "--help\n"
 			);
 		}
@@ -126,9 +128,9 @@ abstract class RedisJobService {
 				continue; // loop disabled
 			}
 
-			foreach ( array( 'include', 'exclude', 'low-priority' ) as $k ) {
+			foreach ( [ 'include', 'exclude', 'low-priority' ] as $k ) {
 				if ( !isset( $group[$k] ) ) {
-					$group[$k] = array();
+					$group[$k] = [];
 				} elseif ( !is_array( $group[$k] ) ) {
 					throw new InvalidArgumentException(
 						"Invalid '$k' value for runner group '$name'." );
@@ -202,7 +204,7 @@ abstract class RedisJobService {
 	/**
 	 * @return string (per JobQueueAggregatorRedis.php)
 	 */
-	public function getReadyQueueKey() {
+	public function getReadyQueueKey() : string {
 		return "jobqueue:aggregator:h-ready-queues:v2"; // global
 	}
 
@@ -211,25 +213,25 @@ abstract class RedisJobService {
 	 * @param string $domain
 	 * @return string (per JobQueueAggregatorRedis.php)
 	 */
-	public function encQueueName( $type, $domain ) {
+	public function encQueueName( string $type, string $domain ) : string {
 		return rawurlencode( $type ) . '/' . rawurlencode( $domain );
 	}
 
 	/**
 	 * @param string $name
-	 * @return string (per JobQueueAggregatorRedis.php)
+	 * @return array (per JobQueueAggregatorRedis.php)
 	 */
-	public function dencQueueName( $name ) {
+	public function dencQueueName( string $name ) : array {
 		list( $type, $domain ) = explode( '/', $name, 2 );
 
-		return array( rawurldecode( $type ), rawurldecode( $domain ) );
+		return [ rawurldecode( $type ), rawurldecode( $domain ) ];
 	}
 
 	/**
 	 * @param string $server
 	 * @return Redis|boolean
 	 */
-	public function getRedisConn( $server ) {
+	public function getRedisConn( string $server ) {
 		// Check the listing "dead" servers which have had a connection errors.
 		// Srvs are marked dead for a limited period of time, to
 		// avoid excessive overhead from repeated connection timeouts.
@@ -248,29 +250,23 @@ abstract class RedisJobService {
 			return $this->conns[$server];
 		}
 
-		try {
-			$conn = new Redis();
-			if ( strpos( $server, ':' ) === false ) {
-				$host = $server;
-				$port = null;
-			} else {
-				list( $host, $port ) = explode( ':', $server );
-			}
-			$result = $conn->connect( $host, $port, 5 );
-			if ( !$result ) {
-				$this->error( "Could not connect to Redis server $host:$port." );
-				// Mark server down for some time to avoid further timeouts
-				$this->downSrvs[$server] = time() + 30;
-
-				return false;
-			}
-			if ( $this->password !== null ) {
-				$conn->auth( $this->password );
-			}
-		} catch ( RedisException $e ) {
+		$conn = new Redis();
+		if ( strpos( $server, ':' ) === false ) {
+			$host = $server;
+			$port = null;
+		} else {
+			list( $host, $port ) = explode( ':', $server );
+		}
+		$result = $conn->connect( $host, $port, 5 );
+		if ( !$result ) {
+			$this->error( "Could not connect to Redis server $host:$port." );
+			// Mark server down for some time to avoid further timeouts
 			$this->downSrvs[$server] = time() + 30;
 
 			return false;
+		}
+		if ( $this->password !== null ) {
+			$conn->auth( $this->password );
 		}
 
 		if ( $conn ) {
@@ -288,10 +284,10 @@ abstract class RedisJobService {
 	 * @param RedisException $e
 	 * @param string $server
 	 */
-	public function handleRedisError( RedisException $e, $server ) {
+	public function handleRedisError( RedisException $e, string $server ) {
 		unset( $this->conns[$server] );
 		$this->error( "Redis error: " . $e->getMessage() );
-		$this->incrStats( "redis-error." . gethostname(), 1 );
+		$this->incrStats( "redis-error." . gethostname() );
 	}
 
 	/**
@@ -301,12 +297,12 @@ abstract class RedisJobService {
 	 * @return mixed
 	 * @throws RedisException
 	 */
-	public function redisCmd( Redis $conn, $cmd, array $args = array() ) {
+	public function redisCmd( Redis $conn, string $cmd, array $args = [] ) {
 		$conn->clearLastError();
 		// we had some job runners oom'ing on this call, log what we are
 		// doing so there is relevant information next to the oom
 		$this->debug( "Redis cmd: $cmd " . json_encode( $args ) );
-		$res = call_user_func_array( array( $conn, $cmd ), $args );
+		$res = call_user_func_array( [ $conn, $cmd ], $args );
 		if ( $conn->getLastError() ) {
 			// Make all errors be exceptions instead of "most but not all".
 			// This will let the caller know to reset the connection to be safe.
@@ -324,7 +320,7 @@ abstract class RedisJobService {
 	 * @return mixed
 	 * @throws RedisExceptionHA
 	 */
-	public function redisCmdHA( array $servers, $cmd, array $args = array() ) {
+	public function redisCmdHA( array $servers, string $cmd, array $args = [] ) {
 		foreach ( $servers as $server ) {
 			$conn = $this->getRedisConn( $server );
 			if ( $conn ) {
@@ -348,7 +344,7 @@ abstract class RedisJobService {
 	 * @return integer Number of servers updated
 	 * @throws RedisExceptionHA
 	 */
-	public function redisCmdBroadcast( array $servers, $cmd, array $args = array() ) {
+	public function redisCmdBroadcast( array $servers, string $cmd, array $args = [] ) : int {
 		$updated = 0;
 
 		foreach ( $servers as $server ) {
@@ -375,7 +371,7 @@ abstract class RedisJobService {
 	 * @param integer $delta
 	 * @return void
 	 */
-	public function incrStats( $event, $delta = 1 ) {
+	public function incrStats( string $event, $delta = 1 ) {
 		if ( !$this->statsdHost || $delta == 0 ) {
 			return; // nothing to do
 		}
@@ -388,7 +384,7 @@ abstract class RedisJobService {
 	 *
 	 * @return string
 	 */
-	private function getStatPacket( $event, $delta ) {
+	private function getStatPacket( string $event, int $delta ) : string {
 		return sprintf( "%s:%s|c\n", "jobrunner.$event", $delta );
 	}
 
@@ -400,13 +396,13 @@ abstract class RedisJobService {
 			$packets = array_reduce(
 				$this->statsdPackets,
 				[ __CLASS__, 'reduceStatPackets' ],
-				array()
+				[]
 			);
 			foreach ( $packets as $packet ) {
 				$this->sendStatsPacket( $packet );
 			}
 		}
-		$this->statsdPackets = array();
+		$this->statsdPackets = [];
 	}
 
 	/**
@@ -426,7 +422,7 @@ abstract class RedisJobService {
 	 *
 	 * @return string[]
 	 */
-	private static function reduceStatPackets( array $reducedMetrics, $metric ) {
+	private static function reduceStatPackets( array $reducedMetrics, string $metric ) : array {
 		$lastReducedMetric = end( $reducedMetrics );
 		if ( strlen( $metric ) >= self::MAX_UDP_SIZE_STR || $lastReducedMetric === false ) {
 			$reducedMetrics[] = $metric; // full packet sized metric or first metric
@@ -449,7 +445,7 @@ abstract class RedisJobService {
 	 * @param string $packet
 	 * @return void
 	 */
-	private function sendStatsPacket( $packet ) {
+	private function sendStatsPacket( string $packet ) {
 		if ( !function_exists( 'socket_create' ) ) {
 			$this->debug( 'No "socket_create" method available.' );
 			return;
@@ -473,7 +469,7 @@ abstract class RedisJobService {
 	/**
 	 * @param string $s
 	 */
-	public function debug( $s ) {
+	public function debug( string $s ) {
 		if ( $this->verbose ) {
 			print date( DATE_ISO8601 ) . " DEBUG: $s\n";
 		}
@@ -482,14 +478,14 @@ abstract class RedisJobService {
 	/**
 	 * @param string $s
 	 */
-	public function notice( $s ) {
+	public function notice( string $s ) {
 		print date( DATE_ISO8601 ) . " NOTICE: $s\n";
 	}
 
 	/**
 	 * @param string $s
 	 */
-	public function error( $s ) {
+	public function error( string $s ) {
 		fwrite( STDERR, date( DATE_ISO8601 ) . " ERROR: $s\n" );
 	}
 }

@@ -13,16 +13,19 @@ RedisJobService::checkEnvironment();
 class RedisJobRunnerService extends RedisJobService {
 	const AGGR_CACHE_TTL_SEC = 1;
 
+	/**
+	 * @throws Exception
+	 */
 	public function main() {
 		$this->notice( "Starting job spawner loop(s)..." );
 
 		$host = gethostname();
-		$prioMap = array(); // map of (id => (current priority, since))
+		$prioMap = []; // map of (id => (current priority, since))
 		$pipeline = new JobRunnerPipeline( $this );
 		foreach ( $this->loopMap as $loop => $info ) {
 			for ( $i=0; $i < $info['runners']; ++$i ) {
 				$pipeline->initSlot( $loop, $i );
-				$prioMap[$loop] = array( 'high' => (bool)mt_rand( 0, 1 ), 'since' => time() );
+				$prioMap[$loop] = [ 'high' => (bool)mt_rand( 0, 1 ), 'since' => time() ];
 			}
 			$this->notice( "Initialized loop $loop with {$info['runners']} runner(s)." );
 		}
@@ -41,7 +44,7 @@ class RedisJobRunnerService extends RedisJobService {
 		}
 
 		$memLast = memory_get_usage();
-		$this->incrStats( "start-runner.$host", 1 );
+		$this->incrStats( "start-runner.$host" );
 		while ( true ) {
 			pcntl_signal_dispatch();
 
@@ -52,7 +55,7 @@ class RedisJobRunnerService extends RedisJobService {
 			$pending =& $this->getReadyQueueMap();
 			if ( !count( $pending ) ) {
 				$this->debug( "No jobs available..." );
-				$this->incrStats( "idle.$host", 1 );
+				$this->incrStats( "idle.$host" );
 				usleep( 100000 ); // no jobs
 				continue;
 			}
@@ -103,11 +106,11 @@ class RedisJobRunnerService extends RedisJobService {
 			// Backoff if there is nothing to do
 			if ( !$anyFree ) {
 				$this->debug( "All runner loops full." );
-				$this->incrStats( "all-full.$host", 1 );
+				$this->incrStats( "all-full.$host" );
 				usleep( 100000 );
 			} elseif ( !$anyNew ) {
 				$this->debug( "Loops have free slots, but there are no appropriate jobs." );
-				$this->incrStats( "some-full.$host", 1 );
+				$this->incrStats( "some-full.$host" );
 				usleep( 100000 );
 			}
 			// Track memory usage
@@ -122,8 +125,8 @@ class RedisJobRunnerService extends RedisJobService {
 	/**
 	 * @return array Cached map of (job type => domain => UNIX timestamp)
 	 */
-	private function &getReadyQueueMap() {
-		static $pendingDBs = array(); // cache
+	private function &getReadyQueueMap() : array {
+		static $pendingDBs = []; // cache
 		static $cacheTimestamp = 0; // UNIX timestamp
 
 		$now = microtime( true );
@@ -132,17 +135,13 @@ class RedisJobRunnerService extends RedisJobService {
 			return $pendingDBs; // process cache hit
 		}
 
-		try {
-			$latestPendingDBs = $this->loadReadyQueueMap();
-			if ( $latestPendingDBs === false ) {
-				return $pendingDBs; // use cache value
-			}
-
-			$pendingDBs = $latestPendingDBs;
-			$cacheTimestamp = $now;
-		} catch ( RedisExceptionHA $e ) {
-			// use stale/empty cache
+		$latestPendingDBs = $this->loadReadyQueueMap();
+		if ( $latestPendingDBs === [] ) {
+		    return $pendingDBs; // use cache value
 		}
+
+		$pendingDBs = $latestPendingDBs;
+		$cacheTimestamp = $now;
 
 		return $pendingDBs;
 	}
@@ -150,19 +149,19 @@ class RedisJobRunnerService extends RedisJobService {
 	/**
 	 * @return array Map of (job type => domain => UNIX timestamp); false on error
 	 */
-	private function loadReadyQueueMap() {
-		$pendingByType = false;
+	private function loadReadyQueueMap() : array {
+		$pendingByType = [];
 
 		try {
 			// Match JobQueueAggregatorRedis.php
 			$map = $this->redisCmdHA(
 				$this->aggrSrvs,
 				'hGetAll',
-				array( $this->getReadyQueueKey() )
+				[ $this->getReadyQueueKey() ]
 			);
 			if ( is_array( $map ) ) {
 				unset( $map['_epoch'] );
-				$pendingByType = array();
+				$pendingByType = [];
 				foreach ( $map as $key => $time ) {
 					list( $type, $domain ) = $this->dencQueueName( $key );
 					$pendingByType[$type][$domain] = $time;
@@ -183,5 +182,5 @@ ini_set( 'display_errors', 1 );
 set_time_limit( 0 );
 ini_set( 'memory_limit', '256M' );
 RedisJobRunnerService::init(
-	getopt( '', array( 'config-file::', 'help', 'verbose' ) )
+	getopt( '', [ 'config-file::', 'help', 'verbose' ] )
 )->main();
