@@ -330,15 +330,14 @@ class PeriodicScriptParamsIterator implements Iterator {
 				"{$domain}:jobqueue:{$type}:h-data", # KEYS[4]
 				"{$domain}:jobqueue:{$type}:z-abandoned", # KEYS[5]
 				"{$domain}:jobqueue:{$type}:z-delayed", # KEYS[6]
-                "{$domain}:jobqueue:{$type}:h-idBySha1", # KEYS[7]
+				"{$domain}:jobqueue:{$type}:h-idBySha1", # KEYS[7]
 				"global:jobqueue:s-queuesWithJobs", # KEYS[8]
 				$now - $this->service->getTTLForType( $type ), # ARGV[1]
 				$now - 7 * 86400, # ARGV[2]
 				$this->service->getAttemptsForType( $type ), # ARGV[3]
 				$now, # ARGV[4]
 				$queueId, # ARGV[5]
-				self::LUA_MAX_JOBS, # ARGV[6]
-				$type # ARGV[7]
+				self::LUA_MAX_JOBS # ARGV[6]
 			],
 			'keys' => 8 # number of first argument(s) that are keys
 		];
@@ -362,7 +361,7 @@ class PeriodicScriptParamsIterator implements Iterator {
 	public static function getChronScript() : string {
 		return <<<LUA
 		local kClaimed, kAttempts, kUnclaimed, kData, kAbandoned, kDelayed, kSha1, kQwJobs = unpack(KEYS)
-		local rClaimCutoff, rPruneCutoff, rAttempts, rTime, queueId, rLimit, rQueue = unpack(ARGV)
+		local rClaimCutoff, rPruneCutoff, rAttempts, rTime, queueId, rLimit = unpack(ARGV)
 		local released,abandoned,pruned,undelayed,ready = 0,0,0,0,0
 		-- Short-circuit if there is nothing at all in the queue
 		if redis.call('exists',kData) == 0 then
@@ -415,11 +414,11 @@ class PeriodicScriptParamsIterator implements Iterator {
 		-- Remove rootjobs
 		local rootJobs = redis.call('KEYS', 'global:jobqueue:*:rootjob:*')
 		for k,job in ipairs(rootJobs) do
-		    redis.call('DEL', job)
+			redis.call('DEL', job)
 		end
 		-- Purge un-runnable jobs
-		if rQueue == 'LocalGlobalUserPageCacheUpdateJob' and redis.call('HLEN', kSha1) == 0 then
-		    redis.call('LTRIM', kUnclaimed, 1, 0)
+		if redis.call('HLEN', kSha1) == 0 then
+			redis.call('LTRIM', kUnclaimed, 1, 0)
 		end
 		return {released,abandoned,pruned,undelayed,ready}
 LUA;
