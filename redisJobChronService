@@ -330,7 +330,7 @@ class PeriodicScriptParamsIterator implements Iterator {
 				"{$domain}:jobqueue:{$type}:h-data", # KEYS[4]
 				"{$domain}:jobqueue:{$type}:z-abandoned", # KEYS[5]
 				"{$domain}:jobqueue:{$type}:z-delayed", # KEYS[6]
-                "{$domain}:jobqueue:{$type}:h-idBySha1", # KEYS[7]
+				"{$domain}:jobqueue:{$type}:h-idBySha1", # KEYS[7]
 				"global:jobqueue:s-queuesWithJobs", # KEYS[8]
 				$now - $this->service->getTTLForType( $type ), # ARGV[1]
 				$now - 7 * 86400, # ARGV[2]
@@ -414,11 +414,11 @@ class PeriodicScriptParamsIterator implements Iterator {
 		-- Remove rootjobs
 		local rootJobs = redis.call('KEYS', 'global:jobqueue:*:rootjob:*')
 		for k,job in ipairs(rootJobs) do
-		    redis.call('DEL', job)
+			redis.call('DEL', job)
 		end
 		-- Purge un-runnable jobs
 		if redis.call('HLEN', kSha1) == 0 then
-		    redis.call('LTRIM', kUnclaimed, 1, 0)
+			redis.call('LTRIM', kUnclaimed, 1, 0)
 		end
 		return {released,abandoned,pruned,undelayed,ready}
 LUA;
