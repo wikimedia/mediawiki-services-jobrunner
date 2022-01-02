@@ -4,6 +4,33 @@
  * Base class for job services with main() implemented by subclasses
  */
 abstract class RedisJobService {
+	/**
+	 * An IPv6 address is made up of 8 words (each x0000 to xFFFF).
+	 * However, the "::" abbreviation can be used on consecutive x0000 words.
+	 * @private
+	 */
+	const RE_IPV6_WORD = '([0-9A-Fa-f]{1,4})';
+	/**
+	 * An IPv6 range is an IP address and a prefix (d0 to d128)
+	 * @private
+	 */
+	const RE_IPV6_PREFIX = '(12[0-8]|1[01][0-9]|[1-9][0-9]|[0-9])';
+	/** @private */
+	const RE_IPV6_ADD =
+		'(?:' .
+			// starts with "::" (including "::")
+			':(?::|(?::' . self::RE_IPV6_WORD . '){1,7})' .
+		'|' .
+			// ends with "::" (except "::")
+			self::RE_IPV6_WORD . '(?::' . self::RE_IPV6_WORD . '){0,6}::' .
+		'|' .
+			// contains one "::" in the middle (the ^ makes the test fail if none found)
+			self::RE_IPV6_WORD . '(?::((?(-1)|:))?' . self::RE_IPV6_WORD . '){1,6}(?(-2)|^)' .
+		'|' .
+			// contains no "::"
+			self::RE_IPV6_WORD . '(?::' . self::RE_IPV6_WORD . '){7}' .
+		')';
+
 	const MAX_UDP_SIZE_STR = 512;
 
 	/** @var array List of IP:<port> entries */
@@ -251,12 +278,12 @@ abstract class RedisJobService {
 		}
 
 		$conn = new Redis();
-		if ( strpos( $server, ':' ) === false ) {
-			$host = $server;
-			$port = null;
-		} else {
-			list( $host, $port ) = explode( ':', $server );
+		$servers = self::splitHostAndPort( $server );
+		if ( $servers === false ) {
+			return false;
 		}
+		$host = $servers[0];
+		$port = $servers[1] ?? null;
 		$result = $conn->connect( $host, $port, 5 );
 		if ( !$result ) {
 			$this->error( "Could not connect to Redis server $host:$port." );
@@ -278,6 +305,62 @@ abstract class RedisJobService {
 		} else {
 			return false;
 		}
+	}
+
+	/**
+	 * Given a host/port string, like one might find in the host part of a URL
+	 * per RFC 2732, split the hostname part and the port part and return an
+	 * array with an element for each. If there is no port part, the array will
+	 * have false in place of the port. If the string was invalid in some way,
+	 * false is returned.
+	 *
+	 * This was easy with IPv4 and was generally done in an ad-hoc way, but
+	 * with IPv6 it's somewhat more complicated due to the need to parse the
+	 * square brackets and colons.
+	 *
+	 * A bare IPv6 address is accepted despite the lack of square brackets.
+	 *
+	 * From ip-utils/wikimedia.
+	 *
+	 * @param string $both The string with the host and port
+	 * @return array|false Array normally, false on certain failures
+	 */
+	public static function splitHostAndPort( $both ) {
+		if ( substr( $both, 0, 1 ) === '[' ) {
+			if ( preg_match( '/^\[(' . self::RE_IPV6_ADD . ')\](?::(?P<port>\d+))?$/', $both, $m ) ) {
+				if ( isset( $m['port'] ) ) {
+					return [ $m[1], intval( $m['port'] ) ];
+				} else {
+					return [ $m[1], false ];
+				}
+			} else {
+				// Square bracket found but no IPv6
+				return false;
+			}
+		}
+		$numColons = substr_count( $both, ':' );
+		if ( $numColons >= 2 ) {
+			// Is it a bare IPv6 address?
+			if ( preg_match( '/^' . self::RE_IPV6_ADD . '$/', $both ) ) {
+				return [ $both, false ];
+			} else {
+				// Not valid IPv6, but too many colons for anything else
+				return false;
+			}
+		}
+		if ( $numColons >= 1 ) {
+			// Host:port?
+			$bits = explode( ':', $both );
+			if ( preg_match( '/^\d+/', $bits[1] ) ) {
+				return [ $bits[0], intval( $bits[1] ) ];
+			} else {
+				// Not a valid port
+				return false;
+			}
+		}
+
+		// Plain hostname
+		return [ $both, false ];
 	}
 
 	/**
