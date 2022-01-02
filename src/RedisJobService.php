@@ -251,11 +251,11 @@ abstract class RedisJobService {
 		}
 
 		$conn = new Redis();
-		if ( strpos( $server, ':' ) === false ) {
+		if ( strpos( $server, ':::' ) === false ) {
 			$host = $server;
 			$port = null;
 		} else {
-			list( $host, $port ) = explode( ':', $server );
+			list( $host, $port ) = explode( ':::', $server );
 		}
 		$result = $conn->connect( $host, $port, 5 );
 		if ( !$result ) {
