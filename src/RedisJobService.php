@@ -251,12 +251,12 @@ abstract class RedisJobService {
 		}
 
 		$conn = new Redis();
-		if ( strpos( $server, ':::' ) === false ) {
-			$host = $server;
-			$port = null;
-		} else {
-			list( $host, $port ) = explode( ':::', $server );
+		$servers = self::splitHostAndPort( $server );
+		if ( $servers === false ) {
+			return false;
 		}
+		$host = $servers[0];
+		$port = $servers[1] ?? null;
 		$result = $conn->connect( $host, $port, 5 );
 		if ( !$result ) {
 			$this->error( "Could not connect to Redis server $host:$port." );
@@ -278,6 +278,62 @@ abstract class RedisJobService {
 		} else {
 			return false;
 		}
+	}
+
+	/**
+	 * Given a host/port string, like one might find in the host part of a URL
+	 * per RFC 2732, split the hostname part and the port part and return an
+	 * array with an element for each. If there is no port part, the array will
+	 * have false in place of the port. If the string was invalid in some way,
+	 * false is returned.
+	 *
+	 * This was easy with IPv4 and was generally done in an ad-hoc way, but
+	 * with IPv6 it's somewhat more complicated due to the need to parse the
+	 * square brackets and colons.
+	 *
+	 * A bare IPv6 address is accepted despite the lack of square brackets.
+	 *
+	 * From ip-utils/wikimedia.
+	 *
+	 * @param string $both The string with the host and port
+	 * @return array|false Array normally, false on certain failures
+	 */
+	public static function splitHostAndPort( $both ) {
+		if ( substr( $both, 0, 1 ) === '[' ) {
+			if ( preg_match( '/^\[(' . self::RE_IPV6_ADD . ')\](?::(?P<port>\d+))?$/', $both, $m ) ) {
+				if ( isset( $m['port'] ) ) {
+					return [ $m[1], intval( $m['port'] ) ];
+				} else {
+					return [ $m[1], false ];
+				}
+			} else {
+				// Square bracket found but no IPv6
+				return false;
+			}
+		}
+		$numColons = substr_count( $both, ':' );
+		if ( $numColons >= 2 ) {
+			// Is it a bare IPv6 address?
+			if ( preg_match( '/^' . self::RE_IPV6_ADD . '$/', $both ) ) {
+				return [ $both, false ];
+			} else {
+				// Not valid IPv6, but too many colons for anything else
+				return false;
+			}
+		}
+		if ( $numColons >= 1 ) {
+			// Host:port?
+			$bits = explode( ':', $both );
+			if ( preg_match( '/^\d+/', $bits[1] ) ) {
+				return [ $bits[0], intval( $bits[1] ) ];
+			} else {
+				// Not a valid port
+				return false;
+			}
+		}
+
+		// Plain hostname
+		return [ $both, false ];
 	}
 
 	/**
