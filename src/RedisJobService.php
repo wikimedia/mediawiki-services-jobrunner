@@ -4,6 +4,32 @@
  * Base class for job services with main() implemented by subclasses
  */
 abstract class RedisJobService {
+	/**
+	 * An IPv6 address is made up of 8 words (each x0000 to xFFFF).
+	 * However, the "::" abbreviation can be used on consecutive x0000 words.
+	 * @private
+	 */
+	const RE_IPV6_WORD = '([0-9A-Fa-f]{1,4})';
+	/**
+	 * An IPv6 range is an IP address and a prefix (d0 to d128)
+	 * @private
+	 */
+	const RE_IPV6_PREFIX = '(12[0-8]|1[01][0-9]|[1-9][0-9]|[0-9])';
+	/** @private */
+	const RE_IPV6_ADD =
+		'(?:' .
+			// starts with "::" (including "::")
+			':(?::|(?::' . self::RE_IPV6_WORD . '){1,7})' .
+		'|' .
+			// ends with "::" (except "::")
+			self::RE_IPV6_WORD . '(?::' . self::RE_IPV6_WORD . '){0,6}::' .
+		'|' .
+			// contains one "::" in the middle (the ^ makes the test fail if none found)
+			self::RE_IPV6_WORD . '(?::((?(-1)|:))?' . self::RE_IPV6_WORD . '){1,6}(?(-2)|^)' .
+		'|' .
+			// contains no "::"
+			self::RE_IPV6_WORD . '(?::' . self::RE_IPV6_WORD . '){7}' 
+
 	const MAX_UDP_SIZE_STR = 512;
 
 	/** @var array List of IP:<port> entries */
