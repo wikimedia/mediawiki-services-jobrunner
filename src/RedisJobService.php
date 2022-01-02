@@ -28,7 +28,8 @@ abstract class RedisJobService {
 			self::RE_IPV6_WORD . '(?::((?(-1)|:))?' . self::RE_IPV6_WORD . '){1,6}(?(-2)|^)' .
 		'|' .
 			// contains no "::"
-			self::RE_IPV6_WORD . '(?::' . self::RE_IPV6_WORD . '){7}' 
+			self::RE_IPV6_WORD . '(?::' . self::RE_IPV6_WORD . '){7}' .
+		')';
 
 	const MAX_UDP_SIZE_STR = 512;
 
