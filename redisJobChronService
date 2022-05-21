@@ -264,7 +264,7 @@ class RedisJobChronService extends RedisJobService {
 	 * @return bool
 	 */
 	private function poolUnlock( $key ) {
-		return (bool)$this->redisCmdHA( $this->aggrSrvs, 'delete', array( $key ) );
+		return (bool)$this->redisCmdHA( $this->aggrSrvs, 'del', array( $key ) );
 	}
 
 	/**
