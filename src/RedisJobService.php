@@ -105,7 +105,7 @@ abstract class RedisJobService {
 	 */
 	public static function init( array $args ) : RedisJobService {
 		if ( !isset( $args['config-file'] ) || isset( $args['help'] ) ) {
-			throw new FatalError( "Usage: php RedisJobRunnerService.php\n"
+			throw new Exception( "Usage: php RedisJobRunnerService.php\n"
 				. "--config-file=[path]\n"
 				. "--help\n"
 			);
