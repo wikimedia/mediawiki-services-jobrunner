@@ -5,7 +5,7 @@ if ( PHP_SAPI !== 'cli' ) {
 	die( "This is not a valid entry point.\n" );
 }
 
-require( __DIR__ . '/src/RedisJobService.php' );
+require __DIR__ . '/src/RedisJobService.php';
 
 RedisJobService::checkEnvironment();
 
@@ -29,7 +29,7 @@ class RedisJobChronService extends RedisJobService {
 		$host = gethostname();
 
 		// Setup signal handlers...
-		$handlerFunc = static function( $signo ) {
+		$handlerFunc = static function ( $signo ) {
 			print "Caught signal ($signo)\n";
 			exit( 0 );
 		};
@@ -40,7 +40,8 @@ class RedisJobChronService extends RedisJobService {
 			throw new Exception( 'Could not install singal handlers.' );
 		}
 
-		usleep( mt_rand( 0, self::PERIOD_WAIT_US ) ); // run out of phase immediately
+		// run out of phase immediately
+		usleep( mt_rand( 0, self::PERIOD_WAIT_US ) );
 
 		$memLast = memory_get_usage();
 		$this->incrStats( "start-chron.$host", 1 );
@@ -93,7 +94,8 @@ class RedisJobChronService extends RedisJobService {
 			shuffle( $qServers );
 
 			// Track queues that become "ready"
-			$aggrMap = array( '_epoch' => time() ); // map of (queue name => timestamp)
+			// map of (queue name => timestamp)
+			$aggrMap = [ '_epoch' => time() ];
 			// Run the chron script on each job queue partition server...
 			foreach ( $qServers as $qServer ) {
 				if ( !$this->updatePartitionQueueServer( $qServer, $aggrMap, $jobs, $lockKey ) ) {
@@ -106,12 +108,12 @@ class RedisJobChronService extends RedisJobService {
 			$this->redisCmdHA(
 				$this->aggrSrvs,
 				'hMSet',
-				array( "{$this->getReadyQueueKey()}:temp", $aggrMap )
+				[ "{$this->getReadyQueueKey()}:temp", $aggrMap ]
 			);
 			$this->redisCmdHA(
 				$this->aggrSrvs,
 				'rename',
-				array( "{$this->getReadyQueueKey()}:temp", $this->getReadyQueueKey() )
+				[ "{$this->getReadyQueueKey()}:temp", $this->getReadyQueueKey() ]
 			);
 
 			// Release the pool lock
@@ -132,15 +134,16 @@ class RedisJobChronService extends RedisJobService {
 
 	/**
 	 * @param string $qServer Redis host
-	 * @param array $aggrMap Map of (queue name => timestamp)
-	 * @param integer $jobs
+	 * @param array &$aggrMap Map of (queue name => timestamp)
+	 * @param int &$jobs
 	 * @param string $lockKey
 	 * @return bool
 	 */
 	private function updatePartitionQueueServer( $qServer, array &$aggrMap, &$jobs, $lockKey ) {
 		$qConn = $this->getRedisConn( $qServer );
 		if ( !$qConn ) {
-			return false; // partition down
+			// partition down
+			return false;
 		}
 
 		// Get the list of queues with non-abandoned jobs
@@ -148,7 +151,7 @@ class RedisJobChronService extends RedisJobService {
 			$queueIds = $this->redisCmd(
 				$qConn,
 				'sMembers',
-				array( 'global:jobqueue:s-queuesWithJobs' )
+				[ 'global:jobqueue:s-queuesWithJobs' ]
 			);
 		} catch ( RedisException $e ) {
 			$this->handleRedisError( $e, $qServer );
@@ -156,18 +159,21 @@ class RedisJobChronService extends RedisJobService {
 		}
 
 		// Build up per-queue script arguments using an Iterator to avoid client OOMs...
-		shuffle( $queueIds ); // equal priority
+		// equal priority
+		shuffle( $queueIds );
 		$paramsByQueue = new PeriodicScriptParamsIterator( $this, $queueIds );
 
 		$ok = true;
 		$queuesChecked = 0;
-		$scriptLoaded = false; // load LUA script only once per server round
+		// load LUA script only once per server round
+		$scriptLoaded = false;
 		foreach ( $paramsByQueue as $params ) {
 			// Run periodic updates on this partition of this queue
 			$affected = $this->updatePartitionQueue( $qServer, $params, $aggrMap, $scriptLoaded );
 			$ok = $ok && ( $affected !== false );
 
-			usleep( self::LUA_WAIT_US ); // avoid CPU hogging
+			// avoid CPU hogging
+			usleep( self::LUA_WAIT_US );
 
 			$jobs += (int)$affected;
 
@@ -183,8 +189,8 @@ class RedisJobChronService extends RedisJobService {
 	/**
 	 * @param string $qServer Redis host
 	 * @param array $params A single value from PeriodicScriptParamsIterator
-	 * @param array $aggrMap Map of (queue name => timestamp)
-	 * @param bool $scriptLoaded
+	 * @param array &$aggrMap Map of (queue name => timestamp)
+	 * @param bool &$scriptLoaded
 	 * @return int|bool Affected jobs or false on failure
 	 */
 	private function updatePartitionQueue(
@@ -192,7 +198,8 @@ class RedisJobChronService extends RedisJobService {
 	) {
 		$qConn = $this->getRedisConn( $qServer );
 		if ( !$qConn ) {
-			return false; // partition down
+			// partition down
+			return false;
 		}
 
 		try {
@@ -201,14 +208,14 @@ class RedisJobChronService extends RedisJobService {
 			if ( $scriptLoaded ) {
 				$sha1 = sha1( $script );
 			} else {
-				$sha1 = $this->redisCmd( $qConn, 'script', array( 'load', $script ) );
+				$sha1 = $this->redisCmd( $qConn, 'script', [ 'load', $script ] );
 				$scriptLoaded = true;
 			}
 
 			$result = $this->redisCmd(
 				$qConn,
 				'evalSha',
-				array( $sha1, $params['params'], $params['keys'] )
+				[ $sha1, $params['params'], $params['keys'] ]
 			);
 
 			if ( $result ) {
@@ -237,18 +244,18 @@ class RedisJobChronService extends RedisJobService {
 
 	/**
 	 * @param string $name
-	 * @param integer $slots
-	 * @param integer $ttl
+	 * @param int $slots
+	 * @param int $ttl
 	 * @return string|bool Lock key or false
 	 */
 	private function poolLock( $name, $slots, $ttl ) {
-		for ( $i=0; $i < $slots; ++$i ) {
+		for ( $i = 0; $i < $slots; ++$i ) {
 			$key = "$name:lock:$i";
 			$now = microtime( true );
 
-			$oldLock = $this->redisCmdHA( $this->aggrSrvs, 'get', array( $key ) );
+			$oldLock = $this->redisCmdHA( $this->aggrSrvs, 'get', [ $key ] );
 			if ( $oldLock === false || $oldLock < ( $now - $ttl ) ) {
-				$casLock = $this->redisCmdHA( $this->aggrSrvs, 'getset', array( $key, $now ) );
+				$casLock = $this->redisCmdHA( $this->aggrSrvs, 'getset', [ $key, $now ] );
 				if ( $casLock == $oldLock ) {
 					return $key;
 				}
@@ -263,7 +270,7 @@ class RedisJobChronService extends RedisJobService {
 	 * @return bool
 	 */
 	private function poolRefreshLock( $key ) {
-		return $this->redisCmdHA( $this->aggrSrvs, 'set', array( $key, microtime( true ) ) );
+		return $this->redisCmdHA( $this->aggrSrvs, 'set', [ $key, microtime( true ) ] );
 	}
 
 	/**
@@ -271,12 +278,12 @@ class RedisJobChronService extends RedisJobService {
 	 * @return bool
 	 */
 	private function poolUnlock( $key ) {
-		return (bool)$this->redisCmdHA( $this->aggrSrvs, 'del', array( $key ) );
+		return (bool)$this->redisCmdHA( $this->aggrSrvs, 'del', [ $key ] );
 	}
 
 	/**
 	 * @param string $type Queue type
-	 * @return integer Seconds
+	 * @return int Seconds
 	 */
 	public function getTTLForType( $type ) {
 		return $this->claimTTLMap[$type] ?? $this->claimTTLMap['*'];
@@ -284,7 +291,7 @@ class RedisJobChronService extends RedisJobService {
 
 	/**
 	 * @param string $type Queue type
-	 * @return integer
+	 * @return int
 	 */
 	public function getAttemptsForType( $type ) {
 		return $this->attemptsMap[$type] ?? $this->attemptsMap['*'];
@@ -325,25 +332,39 @@ class PeriodicScriptParamsIterator implements Iterator {
 		[ $type, $domain ] = json_decode( $queueId );
 		$now = time();
 
-		return array(
-			'queue' => array( $type, $domain ),
-			'params' => array(
-				"{$domain}:jobqueue:{$type}:z-claimed", # KEYS[1]
-				"{$domain}:jobqueue:{$type}:h-attempts", # KEYS[2]
-				"{$domain}:jobqueue:{$type}:l-unclaimed", # KEYS[3]
-				"{$domain}:jobqueue:{$type}:h-data", # KEYS[4]
-				"{$domain}:jobqueue:{$type}:z-abandoned", # KEYS[5]
-				"{$domain}:jobqueue:{$type}:z-delayed", # KEYS[6]
-				"global:jobqueue:s-queuesWithJobs", # KEYS[7]
-				$now - $this->service->getTTLForType( $type ), # ARGV[1]
-				$now - 7 * 86400, # ARGV[2]
-				$this->service->getAttemptsForType( $type ), # ARGV[3]
-				$now, # ARGV[4]
-				$queueId, # ARGV[5]
-				self::LUA_MAX_JOBS # ARGV[6]
-			),
-			'keys' => 7 # number of first argument(s) that are keys
-		);
+		return [
+			'queue' => [ $type, $domain ],
+			'params' => [
+				# KEYS[1]
+				"{$domain}:jobqueue:{$type}:z-claimed",
+				# KEYS[2]
+				"{$domain}:jobqueue:{$type}:h-attempts",
+				# KEYS[3]
+				"{$domain}:jobqueue:{$type}:l-unclaimed",
+				# KEYS[4]
+				"{$domain}:jobqueue:{$type}:h-data",
+				# KEYS[5]
+				"{$domain}:jobqueue:{$type}:z-abandoned",
+				# KEYS[6]
+				"{$domain}:jobqueue:{$type}:z-delayed",
+				# KEYS[7]
+				"global:jobqueue:s-queuesWithJobs",
+				# ARGV[1]
+				$now - $this->service->getTTLForType( $type ),
+				# ARGV[2]
+				$now - 7 * 86400,
+				# ARGV[3]
+				$this->service->getAttemptsForType( $type ),
+				# ARGV[4]
+				$now,
+				# ARGV[5]
+				$queueId,
+				# ARGV[6]
+				self::LUA_MAX_JOBS
+			],
+			# number of first argument(s) that are keys
+			'keys' => 7
+		];
 	}
 
 	#[ReturnTypeWillChange]
@@ -430,5 +451,5 @@ ini_set( 'display_errors', 1 );
 set_time_limit( 0 );
 ini_set( 'memory_limit', '256M' );
 RedisJobChronService::init(
-	getopt( '', array( 'config-file::', 'help', 'verbose' ) )
+	getopt( '', [ 'config-file::', 'help', 'verbose' ] )
 )->main();
