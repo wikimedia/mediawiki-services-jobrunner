@@ -1,7 +1,7 @@
 {
 	"name": "wikimedia/jobrunner",
 	"description": "Continuously process a MediaWiki jobqueue with Redis",
-	"license": "GPL-2.0",
+	"license": "GPL-2.0-or-later",
 	"authors": [
 		{
 			"name": "Aaron Schulz",
