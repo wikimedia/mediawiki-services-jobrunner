@@ -43,7 +43,7 @@ abstract class RedisJobService {
 	public $hpMaxDelay = 120;
 	/**
 	 * The maxtime parameter for runJobs.php for low priority jobs.
-	 * The lower this value is, the less jobs of one domain can hog attention
+	 * The lower this value is, the fewer jobs of one domain can hog attention
 	 * from the jobs on other domains, though more overhead is incurred.
 	 * This should be lower than hpmaxdelay.
 	 * @var integer
@@ -57,7 +57,7 @@ abstract class RedisJobService {
 	public $lpMaxDelay = 600;
 	/**
 	 * The maxtime parameter for runJobs.php for high priority jobs.
-	 * The lower this value is, the less jobs of one domain/type can hog attention
+	 * The lower this value is, the fewer jobs of one domain/type can hog attention
 	 * from jobs of another domain/type, though more overhead is incurred.
 	 * This should be lower than lpmaxdelay.
 	 * @var integer
@@ -217,7 +217,7 @@ abstract class RedisJobService {
 
 	/**
 	 * @param string $name
-	 * @return string (per JobQueueAggregatorRedis.php)
+	 * @return array (per JobQueueAggregatorRedis.php)
 	 */
 	public function dencQueueName( $name ) {
 		list( $type, $domain ) = explode( '/', $name, 2 );
@@ -399,7 +399,7 @@ abstract class RedisJobService {
 		if ( $this->statsdHost ) {
 			$packets = array_reduce(
 				$this->statsdPackets,
-				[ __CLASS__, 'reduceStatPackets' ],
+				array( __CLASS__, 'reduceStatPackets' ),
 				array()
 			);
 			foreach ( $packets as $packet ) {
@@ -419,7 +419,7 @@ abstract class RedisJobService {
 	 * This function reduces the number of packets,the reduced has the maximum dimension of self::MAX_UDP_SIZE_STR
 	 * Reference:
 	 * https://github.com/etsy/statsd/blob/master/README.md
-	 * All metrics can also be batch send in a single UDP packet, separated by a newline character.
+	 * All metrics can also be batch sent in a single UDP packet, separated by a newline character.
 	 *
 	 * @param string[] $reducedMetrics
 	 * @param string $metric

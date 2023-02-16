@@ -9,12 +9,16 @@
 		}
 	],
 	"support": {
-		"issues": "https://phabricator.wikimedia.org/tag/mediawiki-jobrunner/"
+		"issues": "https://phabricator.wikimedia.org/tag/wmf-jobqueue/"
 	},
 	"require": {
 		"php": ">=5.3.2",
+		"ext-json": "*",
+		"ext-mbstring": "*",
+		"ext-posix": "*",
 		"ext-pcntl": "*",
-		"ext-redis": "*"
+		"ext-redis": "*",
+		"ext-sockets": "*"
 	},
 	"require-dev": {
 		"php-parallel-lint/php-console-highlighter": "1.0.0",
