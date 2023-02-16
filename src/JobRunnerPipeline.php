@@ -42,6 +42,7 @@ class JobRunnerPipeline {
 		$new = 0;
 		$host = gethostname();
 		$cTime = time();
+		// @phan-suppress-next-line PhanTypeMismatchDimFetch
 		foreach ( $this->procMap[$loop] as $slot => &$procSlot ) {
 			$status = $procSlot['handle'] ? proc_get_status( $procSlot['handle'] ) : null;
 			if ( $status ) {
@@ -205,7 +206,10 @@ class JobRunnerPipeline {
 			2 => [ "pipe", "w" ]
 		];
 
-		$this->srvc->debug( "Spawning runner in loop $loop at slot $slot ($type, $db):\n\t$cmd." );
+		$this->srvc->debug(
+			"Spawning runner in loop $loop at slot $slot ($type, $db):\n\t"
+				. implode( ' ', $cmd ) . "."
+		);
 
 		// Start the runner in the background
 		$procSlot['handle'] = proc_open( $cmd, $descriptors, $procSlot['pipes'] );
@@ -234,7 +238,7 @@ class JobRunnerPipeline {
 			return true;
 		}
 
-		$this->srvc->error( "Could not spawn process in loop $loop: $cmd" );
+		$this->srvc->error( "Could not spawn process in loop $loop: " . implode( ' ', $cmd ) );
 		$this->srvc->incrStats( 'runner-status.error', 1 );
 
 		return false;

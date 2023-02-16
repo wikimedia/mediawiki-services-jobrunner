@@ -98,6 +98,7 @@ abstract class RedisJobService {
 			throw new InvalidArgumentException( "Could not parse JSON file '{$file}'." );
 		}
 
+		// @phan-suppress-next-line PhanTypeInstantiateAbstractStatic
 		$instance = new static( $config );
 		$instance->verbose = isset( $args['verbose'] );
 
@@ -267,7 +268,7 @@ abstract class RedisJobService {
 			} else {
 				[ $host, $port ] = explode( ':', $server );
 			}
-			$result = $conn->connect( $host, $port, 5 );
+			$result = $conn->connect( $host, (int)$port, 5 );
 			if ( !$result ) {
 				$this->error( "Could not connect to Redis server $host:$port." );
 				// Mark server down for some time to avoid further timeouts
@@ -314,10 +315,11 @@ abstract class RedisJobService {
 		// doing so there is relevant information next to the oom
 		$this->debug( "Redis cmd: $cmd " . json_encode( $args ) );
 		$res = call_user_func_array( [ $conn, $cmd ], $args );
-		if ( $conn->getLastError() ) {
+		$err = $conn->getLastError();
+		if ( $err !== null ) {
 			// Make all errors be exceptions instead of "most but not all".
 			// This will let the caller know to reset the connection to be safe.
-			throw new RedisException( $conn->getLastError() );
+			throw new RedisException( $err );
 		}
 		return $res;
 	}

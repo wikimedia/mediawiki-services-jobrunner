@@ -6,6 +6,9 @@ require __DIR__ . '/JobRunnerPipeline.php';
 class RedisJobRunnerService extends RedisJobService {
 	private const AGGR_CACHE_TTL_SEC = 1;
 
+	/**
+	 * @return never
+	 */
 	public function main() {
 		$this->notice( "Starting job spawner loop(s)..." );
 
@@ -21,7 +24,10 @@ class RedisJobRunnerService extends RedisJobService {
 			$this->notice( "Initialized loop $loop with {$info['runners']} runner(s)." );
 		}
 
-		// Setup signal handlers...
+		/**
+		 * Setup signal handlers...
+		 * @return never
+		 */
 		$handlerFunc = static function ( $signo ) use ( $pipeline ) {
 			print "Caught signal ($signo)\n";
 			$pipeline->terminateSlots();
@@ -147,7 +153,7 @@ class RedisJobRunnerService extends RedisJobService {
 	}
 
 	/**
-	 * @return array Map of (job type => domain => UNIX timestamp); false on error
+	 * @return array|false Map of (job type => domain => UNIX timestamp); false on error
 	 */
 	private function loadReadyQueueMap() {
 		$pendingByType = false;

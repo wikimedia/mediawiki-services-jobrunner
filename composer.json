@@ -23,6 +23,7 @@
 	"require-dev": {
 		"mediawiki/mediawiki-codesniffer": "41.0.0",
 		"mediawiki/minus-x": "1.1.1",
+		"mediawiki/mediawiki-phan-config": "0.12.1",
 		"php-parallel-lint/php-console-highlighter": "1.0.0",
 		"php-parallel-lint/php-parallel-lint": "1.3.2"
 	},
@@ -30,12 +31,14 @@
 		"test": [
 			"parallel-lint redisJobChronService redisJobRunnerService . --exclude vendor",
 			"@phpcs",
+			"phan --allow-polyfill-parser --long-progress-bar",
 			"minus-x check ."
 		],
 		"fix": [
 			"minus-x fix .",
 			"phpcbf"
 		],
-		"phpcs": "phpcs -sp"
+		"phpcs": "phpcs -sp",
+		"phan": "phan -d . --long-progress-bar"
 	}
 }

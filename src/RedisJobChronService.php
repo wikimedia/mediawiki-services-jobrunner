@@ -16,13 +16,17 @@ class RedisJobChronService extends RedisJobService {
 
 	/**
 	 * Entry point method that starts the service in earnest and keeps running
+	 * @return never
 	 */
 	public function main() {
 		$this->notice( "Starting job chron loop(s)..." );
 
 		$host = gethostname();
 
-		// Setup signal handlers...
+		/**
+		 * Setup signal handlers...
+		 * @return never
+		 */
 		$handlerFunc = static function ( $signo ) {
 			print "Caught signal ($signo)\n";
 			exit( 0 );
@@ -35,10 +39,11 @@ class RedisJobChronService extends RedisJobService {
 		}
 
 		// run out of phase immediately
-		usleep( mt_rand( 0, self::PERIOD_WAIT_US ) );
+		usleep( mt_rand( 0, (int)self::PERIOD_WAIT_US ) );
 
 		$memLast = memory_get_usage();
 		$this->incrStats( "start-chron.$host", 1 );
+		// @phan-suppress-next-line PhanInfiniteLoop
 		while ( true ) {
 			pcntl_signal_dispatch();
 
@@ -47,7 +52,7 @@ class RedisJobChronService extends RedisJobService {
 				$this->notice( "Updated the state of $count job(s) (recycle/undelay/abandon)." );
 			}
 
-			usleep( self::PERIOD_WAIT_US );
+			usleep( (int)self::PERIOD_WAIT_US );
 
 			// Track memory usage
 			$memCurrent = memory_get_usage();
