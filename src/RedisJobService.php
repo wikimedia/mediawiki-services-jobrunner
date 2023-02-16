@@ -1,5 +1,7 @@
 <?php
 
+require __DIR__ . '/RedisExceptionHA.php';
+
 /**
  * Base class for job services with main() implemented by subclasses
  */
@@ -499,7 +501,4 @@ abstract class RedisJobService {
 	public function error( $s ) {
 		fwrite( STDERR, date( DATE_ATOM ) . " ERROR: $s\n" );
 	}
-}
-
-class RedisExceptionHA extends Exception {
 }
