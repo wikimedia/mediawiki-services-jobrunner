@@ -4,7 +4,7 @@
  * Base class for job services with main() implemented by subclasses
  */
 abstract class RedisJobService {
-	const MAX_UDP_SIZE_STR = 512;
+	private const MAX_UDP_SIZE_STR = 512;
 
 	/** @var array List of IP:<port> entries */
 	protected $queueSrvs = array();
@@ -12,6 +12,7 @@ abstract class RedisJobService {
 	protected $aggrSrvs = array();
 	/** @var string Redis password */
 	protected $password;
+	protected $wrapper;
 	/** @var string IP address or hostname */
 	protected $statsdHost;
 	/** @var array statsd packets pending sending */
@@ -122,7 +123,9 @@ abstract class RedisJobService {
 			if ( !is_int( $group['runners'] ) ) {
 				throw new InvalidArgumentException(
 					"Invalid 'runners' value for runner group '$name'." );
-			} elseif ( $group['runners'] == 0 ) {
+			}
+
+			if ( $group['runners'] == 0 ) {
 				continue; // loop disabled
 			}
 
@@ -187,9 +190,13 @@ abstract class RedisJobService {
 	public static function checkEnvironment() {
 		if ( !class_exists( 'Redis' ) ) {
 			die( "The phpredis extension is not installed; aborting.\n" );
-		} elseif ( !function_exists( 'pcntl_signal' ) ) {
+		}
+
+		if ( !function_exists( 'pcntl_signal' ) ) {
 			die( "The pcntl module is not available; aborting.\n" );
-		} elseif ( !function_exists( 'posix_kill' ) ) {
+		}
+
+		if ( !function_exists( 'posix_kill' ) ) {
 			die( "posix_kill is not available; aborting.\n" );
 		}
 	}
@@ -220,14 +227,14 @@ abstract class RedisJobService {
 	 * @return array (per JobQueueAggregatorRedis.php)
 	 */
 	public function dencQueueName( $name ) {
-		list( $type, $domain ) = explode( '/', $name, 2 );
+		[ $type, $domain ] = explode( '/', $name, 2 );
 
 		return array( rawurldecode( $type ), rawurldecode( $domain ) );
 	}
 
 	/**
 	 * @param string $server
-	 * @return Redis|boolean
+	 * @return Redis|bool
 	 */
 	public function getRedisConn( $server ) {
 		// Check the listing "dead" servers which have had a connection errors.
@@ -254,7 +261,7 @@ abstract class RedisJobService {
 				$host = $server;
 				$port = null;
 			} else {
-				list( $host, $port ) = explode( ':', $server );
+				[ $host, $port ] = explode( ':', $server );
 			}
 			$result = $conn->connect( $host, $port, 5 );
 			if ( !$result ) {
@@ -273,15 +280,11 @@ abstract class RedisJobService {
 			return false;
 		}
 
-		if ( $conn ) {
-			$conn->setOption( Redis::OPT_READ_TIMEOUT, 5 );
-			$conn->setOption( Redis::OPT_SERIALIZER, Redis::SERIALIZER_NONE );
-			$this->conns[$server] = $conn;
+		$conn->setOption( Redis::OPT_READ_TIMEOUT, 5 );
+		$conn->setOption( Redis::OPT_SERIALIZER, Redis::SERIALIZER_NONE );
+		$this->conns[$server] = $conn;
 
-			return $conn;
-		} else {
-			return false;
-		}
+		return $conn;
 	}
 
 	/**
@@ -475,7 +478,7 @@ abstract class RedisJobService {
 	 */
 	public function debug( $s ) {
 		if ( $this->verbose ) {
-			print date( DATE_ISO8601 ) . " DEBUG: $s\n";
+			print date( DATE_ATOM ) . " DEBUG: $s\n";
 		}
 	}
 
@@ -483,14 +486,14 @@ abstract class RedisJobService {
 	 * @param string $s
 	 */
 	public function notice( $s ) {
-		print date( DATE_ISO8601 ) . " NOTICE: $s\n";
+		print date( DATE_ATOM ) . " NOTICE: $s\n";
 	}
 
 	/**
 	 * @param string $s
 	 */
 	public function error( $s ) {
-		fwrite( STDERR, date( DATE_ISO8601 ) . " ERROR: $s\n" );
+		fwrite( STDERR, date( DATE_ATOM ) . " ERROR: $s\n" );
 	}
 }
 

@@ -50,9 +50,7 @@ class JobRunnerPipeline {
 				$procSlot['stderr'] .= fread( $procSlot['pipes'][2], 65535 );
 			}
 			if ( $status && $status['running'] ) {
-				$maxReal = isset( $this->srvc->maxRealMap[$procSlot['type']] )
-					? $this->srvc->maxRealMap[$procSlot['type']]
-					: $this->srvc->maxRealMap['*'];
+				$maxReal = $this->srvc->maxRealMap[$procSlot['type']] ?? $this->srvc->maxRealMap['*'];
 				$age = $cTime - $procSlot['stime'];
 				if ( $age >= $maxReal && !$procSlot['sigtime'] ) {
 					$cmd = $procSlot['cmd'];
@@ -176,11 +174,9 @@ class JobRunnerPipeline {
 	 */
 	protected function spawnRunner( $loop, $slot, $highPrio, array $queue, array &$procSlot ) {
 		// Pick a random queue
-		list( $type, $db ) = $queue;
+		[ $type, $db ] = $queue;
 		$maxtime = $highPrio ? $this->srvc->lpMaxTime : $this->srvc->hpMaxTime;
-		$maxmem = isset( $this->srvc->maxMemMap[$type] )
-			? $this->srvc->maxMemMap[$type]
-			: $this->srvc->maxMemMap['*'];
+		$maxmem = $this->srvc->maxMemMap[$type] ?? $this->srvc->maxMemMap['*'];
 
 		// Make sure the runner is launched with various time/memory limits.
 		// Nice the process so things like ssh and deployment scripts are fine.
@@ -226,11 +222,12 @@ class JobRunnerPipeline {
 
 		if ( $procSlot['handle'] ) {
 			return true;
-		} else {
-			$this->srvc->error( "Could not spawn process in loop $loop: $cmd" );
-			$this->srvc->incrStats( 'runner-status.error', 1 );
-			return false;
 		}
+
+		$this->srvc->error( "Could not spawn process in loop $loop: $cmd" );
+		$this->srvc->incrStats( 'runner-status.error', 1 );
+
+		return false;
 	}
 
 	/**

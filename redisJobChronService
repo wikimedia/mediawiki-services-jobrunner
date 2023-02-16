@@ -10,8 +10,15 @@ require( __DIR__ . '/src/RedisJobService.php' );
 RedisJobService::checkEnvironment();
 
 class RedisJobChronService extends RedisJobService {
-	const LUA_WAIT_US = 5000; // time to wait between Lua scripts
-	const PERIOD_WAIT_US = 1e6; // time between task runs
+	/**
+	 * time to wait between Lua scripts
+	 */
+	private const LUA_WAIT_US = 5000;
+
+	/**
+	 * time between task runs
+	 */
+	private const PERIOD_WAIT_US = 1e6;
 
 	/**
 	 * Entry point method that starts the service in earnest and keeps running
@@ -22,7 +29,7 @@ class RedisJobChronService extends RedisJobService {
 		$host = gethostname();
 
 		// Setup signal handlers...
-		$handlerFunc = function( $signo ) {
+		$handlerFunc = static function( $signo ) {
 			print "Caught signal ($signo)\n";
 			exit( 0 );
 		};
@@ -205,8 +212,8 @@ class RedisJobChronService extends RedisJobService {
 			);
 
 			if ( $result ) {
-				list( $qType, $qDomain ) = $params['queue'];
-				list( $released, $abandoned, $pruned, $undelayed, $ready ) = $result;
+				[ $qType, $qDomain ] = $params['queue'];
+				[ $released, $abandoned, $pruned, $undelayed, $ready ] = $result;
 				if ( $ready > 0 ) {
 					// This checks $ready to handle lost aggregator updates as well as
 					// to merge after network partitions that caused aggregator fail-over.
@@ -272,9 +279,7 @@ class RedisJobChronService extends RedisJobService {
 	 * @return integer Seconds
 	 */
 	public function getTTLForType( $type ) {
-		return isset( $this->claimTTLMap[$type] )
-			? $this->claimTTLMap[$type]
-			: $this->claimTTLMap['*'];
+		return $this->claimTTLMap[$type] ?? $this->claimTTLMap['*'];
 	}
 
 	/**
@@ -282,9 +287,7 @@ class RedisJobChronService extends RedisJobService {
 	 * @return integer
 	 */
 	public function getAttemptsForType( $type ) {
-		return isset( $this->attemptsMap[$type] )
-			? $this->attemptsMap[$type]
-			: $this->attemptsMap['*'];
+		return $this->attemptsMap[$type] ?? $this->attemptsMap['*'];
 	}
 }
 
@@ -294,7 +297,10 @@ class PeriodicScriptParamsIterator implements Iterator {
 	/** @var string[] JSON encoded queue name list */
 	private $queueIds;
 
-	const LUA_MAX_JOBS = 500; // limit on the number of jobs to change state in a Lua script
+	/**
+	 * limit on the number of jobs to change state in a Lua script
+	 */
+	private const LUA_MAX_JOBS = 500;
 
 	/**
 	 * @param RedisJobChronService $service
@@ -316,7 +322,7 @@ class PeriodicScriptParamsIterator implements Iterator {
 			return false;
 		}
 
-		list( $type, $domain ) = json_decode( $queueId );
+		[ $type, $domain ] = json_decode( $queueId );
 		$now = time();
 
 		return array(

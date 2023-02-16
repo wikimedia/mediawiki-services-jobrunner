@@ -11,7 +11,7 @@ require( __DIR__ . '/src/JobRunnerPipeline.php' );
 RedisJobService::checkEnvironment();
 
 class RedisJobRunnerService extends RedisJobService {
-	const AGGR_CACHE_TTL_SEC = 1;
+	private const AGGR_CACHE_TTL_SEC = 1;
 
 	public function main() {
 		$this->notice( "Starting job spawner loop(s)..." );
@@ -28,7 +28,7 @@ class RedisJobRunnerService extends RedisJobService {
 		}
 
 		// Setup signal handlers...
-		$handlerFunc = function( $signo ) use ( $pipeline ) {
+		$handlerFunc = static function( $signo ) use ( $pipeline ) {
 			print "Caught signal ($signo)\n";
 			$pipeline->terminateSlots();
 			exit( 0 );
@@ -76,7 +76,7 @@ class RedisJobRunnerService extends RedisJobService {
 					++$prioSwitches;
 				}
 				// Find any free slots and replace them with new processes
-				list( $free, $new ) = $pipeline->refillSlots( $loop, $prioMap, $pending );
+				[ $free, $new ] = $pipeline->refillSlots( $loop, $prioMap, $pending );
 				$anyFree += $free;
 				$anyNew += $new;
 				// Rotate the priority from high/low and back if no jobs were found
@@ -164,7 +164,7 @@ class RedisJobRunnerService extends RedisJobService {
 				unset( $map['_epoch'] );
 				$pendingByType = array();
 				foreach ( $map as $key => $time ) {
-					list( $type, $domain ) = $this->dencQueueName( $key );
+					[ $type, $domain ] = $this->dencQueueName( $key );
 					$pendingByType[$type][$domain] = $time;
 				}
 			}
