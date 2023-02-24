@@ -1,6 +1,7 @@
 <?php
 
 require __DIR__ . '/RedisJobService.php';
+require __DIR__ . '/PeriodicScriptParamsIterator.php';
 
 class RedisJobChronService extends RedisJobService {
 	/**
