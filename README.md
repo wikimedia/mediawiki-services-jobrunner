@@ -1,5 +1,10 @@
 redisJobRunnerService -- Continuously process a MediaWiki jobqueue
 
+Installation
+-----------
+
+```$ composer install --no-dev```
+
 Description
 -----------
 

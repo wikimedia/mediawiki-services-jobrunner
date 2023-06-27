@@ -14,4 +14,7 @@ $cfg['file_list'] = array_merge(
 	class_exists( ReturnTypeWillChange::class ) ? [] : [ '.phan/stubs/ReturnTypeWillChange.php' ]
 );
 
+$cfg['directory_list'][] = 'vendor/';
+$cfg['exclude_analysis_directory_list'][] = 'vendor/';
+
 return $cfg;

@@ -18,7 +18,8 @@
 		"ext-posix": "*",
 		"ext-pcntl": "*",
 		"ext-redis": "*",
-		"ext-sockets": "*"
+		"ext-sockets": "*",
+		"wikimedia/ip-utils": "4.0.0"
 	},
 	"require-dev": {
 		"mediawiki/mediawiki-codesniffer": "41.0.0",

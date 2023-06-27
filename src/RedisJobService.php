@@ -2,6 +2,14 @@
 
 require __DIR__ . '/RedisExceptionHA.php';
 
+if ( is_readable( __DIR__ . '/../vendor/autoload.php' ) ) {
+	require_once __DIR__ . '/../vendor/autoload.php';
+} elseif ( file_exists( __DIR__ . '/../vendor/autoload.php' ) ) {
+	die( __DIR__ . '/../vendor/autoload.php exists but is not readable' );
+}
+
+use Wikimedia\IPUtils;
+
 /**
  * Base class for job services with main() implemented by subclasses
  */
@@ -176,14 +184,10 @@ abstract class RedisJobService {
 		}
 
 		if ( isset( $config['statsd'] ) ) {
-			if ( strpos( $config['statsd'], ':' ) !== false ) {
-				$parts = explode( ':', $config['statsd'] );
-				$this->statsdHost = $parts[0];
-				$this->statsdPort = (int)$parts[1];
-			} else {
-				// Use default statsd port if not specified
-				$this->statsdHost = $config['statsd'];
-				$this->statsdPort = 8125;
+			$statsdServers = IPUtils::splitHostAndPort( $config['statsd'] );
+			if ( $statsdServers !== false ) {
+				$this->statsdHost = $statsdServers[0];
+				$this->statsdPort = $statsdServers[1] ?? 8125;
 			}
 		}
 	}
@@ -262,12 +266,12 @@ abstract class RedisJobService {
 
 		try {
 			$conn = new Redis();
-			if ( strpos( $server, ':' ) === false ) {
-				$host = $server;
-				$port = null;
-			} else {
-				[ $host, $port ] = explode( ':', $server );
+			$servers = IPUtils::splitHostAndPort( $server );
+			if ( $servers === false ) {
+				return false;
 			}
+			$host = $servers[0];
+			$port = $servers[1] ?? null;
 			$result = $conn->connect( $host, (int)$port, 5 );
 			if ( !$result ) {
 				$this->error( "Could not connect to Redis server $host:$port." );
