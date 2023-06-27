@@ -1,7 +1,8 @@
-NAME
 redisJobRunnerService -- Continuously process a MediaWiki jobqueue
 
-DESCRIPTION
+Description
+-----------
+
 redisJobRunnerService is an infinite "while loop" used to call MediaWiki runJobs.php
 and eventually attempt to process any job enqueued. A number of virtual sub-loops with
 their own runners and job types must be defined via parameters. These loops can set any
@@ -15,7 +16,25 @@ You will probably want to run this script under your webserver username.
 The runner can be made into a service via upstart (or anything comparable).
 
 Example:
+```
 redisJobRunnerService --config-file=/etc/jobrunner/jobrunner.json --verbose
+```
 
-LICENSE
-GPLv2.0, see COPYING at the root of the repository for the complete license.
+License
+-------
+Copyright 2014- MediaWiki contributors
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program; if not, write to the Free Software Foundation, Inc.,
+51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+<http://www.gnu.org/copyleft/gpl.html>

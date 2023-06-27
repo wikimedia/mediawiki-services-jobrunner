@@ -4,3 +4,4 @@ jobrunner.json.sample
 /vendor/
 composer.lock
 *.swp
+/doc/
