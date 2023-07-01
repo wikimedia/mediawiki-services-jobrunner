@@ -195,7 +195,7 @@ class JobRunnerPipeline {
 			$with[] = escapeshellarg( $v );
 		}
 		// The dispatcher might be runJobs.php, curl, or wget
-		$cmd = str_replace( $what, $with, $this->srvc->dispatcher );
+		$cmd = [ str_replace( $what, $with, $this->srvc->dispatcher ) ];
 
 		$descriptors = [
 			// stdin (child)
