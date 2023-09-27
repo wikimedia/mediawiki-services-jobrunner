@@ -195,7 +195,7 @@ class JobRunnerPipeline {
 			$with[] = escapeshellarg( $v );
 		}
 		// The dispatcher might be runJobs.php, curl, or wget
-		$cmd = [ str_replace( $what, $with, $this->srvc->dispatcher ) ];
+		$cmd = str_replace( $what, $with, $this->srvc->dispatcher );
 
 		$descriptors = [
 			// stdin (child)
@@ -207,8 +207,7 @@ class JobRunnerPipeline {
 		];
 
 		$this->srvc->debug(
-			"Spawning runner in loop $loop at slot $slot ($type, $db):\n\t"
-				. implode( ' ', $cmd ) . "."
+			"Spawning runner in loop $loop at slot $slot ($type, $db):\n\t$cmd."
 		);
 
 		// Start the runner in the background
@@ -238,7 +237,7 @@ class JobRunnerPipeline {
 			return true;
 		}
 
-		$this->srvc->error( "Could not spawn process in loop $loop: " . implode( ' ', $cmd ) );
+		$this->srvc->error( "Could not spawn process in loop $loop: $cmd" );
 		$this->srvc->incrStats( 'runner-status.error', 1 );
 
 		return false;
