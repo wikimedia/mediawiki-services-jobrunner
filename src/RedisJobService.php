@@ -187,7 +187,7 @@ abstract class RedisJobService {
 			$statsdServers = IPUtils::splitHostAndPort( $config['statsd'] );
 			if ( $statsdServers !== false ) {
 				$this->statsdHost = $statsdServers[0];
-				$this->statsdPort = $statsdServers[1] ?? 8125;
+				$this->statsdPort = $statsdServers[1] ?: 8125;
 			}
 		}
 	}
@@ -271,7 +271,7 @@ abstract class RedisJobService {
 				return false;
 			}
 			$host = $servers[0];
-			$port = $servers[1] ?? null;
+			$port = $servers[1] ?: null;
 			$result = $conn->connect( $host, (int)$port, 5 );
 			if ( !$result ) {
 				$this->error( "Could not connect to Redis server $host:$port." );
