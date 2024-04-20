@@ -37,7 +37,7 @@ class RedisJobRunnerService extends RedisJobService {
 			&& pcntl_signal( SIGINT, $handlerFunc )
 			&& pcntl_signal( SIGTERM, $handlerFunc );
 		if ( !$ok ) {
-			throw new Exception( 'Could not install singal handlers.' );
+			throw new RuntimeException( 'Could not install singal handlers.' );
 		}
 
 		$memLast = memory_get_usage();

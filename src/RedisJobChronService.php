@@ -35,7 +35,7 @@ class RedisJobChronService extends RedisJobService {
 			&& pcntl_signal( SIGINT, $handlerFunc )
 			&& pcntl_signal( SIGTERM, $handlerFunc );
 		if ( !$ok ) {
-			throw new Exception( 'Could not install singal handlers.' );
+			throw new RuntimeException( 'Could not install singal handlers.' );
 		}
 
 		// run out of phase immediately
