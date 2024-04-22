@@ -100,7 +100,7 @@ abstract class RedisJobService {
 		}
 
 		// Remove comments and load into an array
-		$content = trim( preg_replace( '/\/\/.*$/m', '',  $content ) );
+		$content = trim( preg_replace( '/\/\/.*$/m', '', $content ) );
 		$config = json_decode( $content, true );
 		if ( !is_array( $config ) ) {
 			throw new InvalidArgumentException( "Could not parse JSON file '{$file}'." );
