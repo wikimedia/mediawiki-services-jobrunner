@@ -117,7 +117,7 @@ class RedisJobChronService extends RedisJobService {
 
 			// Release the pool lock
 			$this->poolUnlock( $lockKey );
-		} catch ( RedisExceptionHA $e ) {
+		} catch ( RedisExceptionHA ) {
 			$ok = false;
 		}
 

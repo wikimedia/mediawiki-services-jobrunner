@@ -283,7 +283,7 @@ abstract class RedisJobService {
 			if ( $this->password !== null ) {
 				$conn->auth( $this->password );
 			}
-		} catch ( RedisException $e ) {
+		} catch ( RedisException ) {
 			$this->downSrvs[$server] = time() + 30;
 
 			return false;

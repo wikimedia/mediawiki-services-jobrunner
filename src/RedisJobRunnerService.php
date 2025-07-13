@@ -145,7 +145,7 @@ class RedisJobRunnerService extends RedisJobService {
 
 			$pendingDBs = $latestPendingDBs;
 			$cacheTimestamp = $now;
-		} catch ( RedisExceptionHA $e ) {
+		} catch ( RedisExceptionHA ) {
 			// use stale/empty cache
 		}
 
@@ -173,7 +173,7 @@ class RedisJobRunnerService extends RedisJobService {
 					$pendingByType[$type][$domain] = $time;
 				}
 			}
-		} catch ( RedisExceptionHA $e ) {
+		} catch ( RedisExceptionHA ) {
 			// use stale/empty cache
 		}
 
