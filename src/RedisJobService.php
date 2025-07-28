@@ -22,7 +22,6 @@ abstract class RedisJobService {
 	protected $aggrSrvs = [];
 	/** @var string Redis password */
 	protected $password;
-	protected $wrapper;
 	/** @var string IP address or hostname */
 	protected $statsdHost;
 	/** @var array statsd packets pending sending */
@@ -152,9 +151,6 @@ abstract class RedisJobService {
 			$this->loopMap[] = $group;
 		}
 
-		if ( isset( $config['wrapper'] ) ) {
-			$this->wrapper = $config['wrapper'];
-		}
 		if ( isset( $config['redis']['password'] ) ) {
 			$this->password = $config['redis']['password'];
 		}

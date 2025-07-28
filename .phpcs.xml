@@ -3,7 +3,6 @@
 	<rule ref="./vendor/mediawiki/mediawiki-codesniffer/MediaWiki">
 		<exclude name="MediaWiki.Commenting.FunctionAnnotations.UnrecognizedAnnotation" />
 		<exclude name="MediaWiki.Commenting.LicenseComment.LicenseTagNonFileComment" />
-		<exclude name="MediaWiki.Commenting.PropertyDocumentation.MissingDocumentationProtected" />
 		<exclude name="MediaWiki.Usage.ForbiddenFunctions.compact" />
 		<exclude name="MediaWiki.Usage.ForbiddenFunctions.escapeshellarg" />
 		<exclude name="MediaWiki.Usage.ForbiddenFunctions.proc_open" />
