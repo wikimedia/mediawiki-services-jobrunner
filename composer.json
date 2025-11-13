@@ -19,7 +19,7 @@
 		"ext-pcntl": "*",
 		"ext-redis": "*",
 		"ext-sockets": "*",
-		"wikimedia/ip-utils": "4.0.0"
+		"wikimedia/ip-utils": "5.0.0"
 	},
 	"require-dev": {
 		"mediawiki/mediawiki-codesniffer": "48.0.0",
