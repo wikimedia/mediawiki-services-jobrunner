@@ -12,7 +12,7 @@
 		"issues": "https://phabricator.wikimedia.org/tag/wmf-jobqueue/"
 	},
 	"require": {
-		"php": ">=8.1",
+		"php": ">=8.2",
 		"ext-json": "*",
 		"ext-mbstring": "*",
 		"ext-posix": "*",
