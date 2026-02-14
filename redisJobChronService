@@ -9,7 +9,7 @@ require __DIR__ . '/src/RedisJobChronService.php';
 
 RedisJobService::checkEnvironment();
 
-error_reporting( E_ALL | E_STRICT );
+error_reporting( E_ALL );
 ini_set( 'display_errors', 1 );
 
 // Run the server...
