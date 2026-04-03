@@ -214,8 +214,8 @@ class JobRunnerPipeline {
 		$procSlot['handle'] = proc_open( $cmd, $descriptors, $procSlot['pipes'] );
 		if ( $procSlot['handle'] ) {
 			// Make sure socket reads don't wait for data
-			stream_set_blocking( $procSlot['pipes'][1], 0 );
-			stream_set_blocking( $procSlot['pipes'][2], 0 );
+			stream_set_blocking( $procSlot['pipes'][1], false );
+			stream_set_blocking( $procSlot['pipes'][2], false );
 			// Set a timeout so stream_get_contents() won't block for sanity
 			stream_set_timeout( $procSlot['pipes'][1], 1 );
 			stream_set_timeout( $procSlot['pipes'][2], 1 );
