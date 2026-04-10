@@ -41,7 +41,7 @@ abstract class RedisJobService {
 	public $loopMap = [];
 	/** @var array Map of (job type => integer) */
 	public $maxRealMap = [];
-	/** @var array Map of (job type => integer) */
+	/** @var array Map of (job type => string) */
 	public $maxMemMap = [];
 	/** @var string Command to run jobs and return the status JSON blob */
 	public $dispatcher;

@@ -183,7 +183,7 @@ class JobRunnerPipeline {
 	protected function spawnRunner( $loop, $slot, $highPrio, array $queue, array &$procSlot ) {
 		// Pick a random queue
 		[ $type, $db ] = $queue;
-		$maxtime = $highPrio ? $this->srvc->lpMaxTime : $this->srvc->hpMaxTime;
+		$maxtime = (string)( $highPrio ? $this->srvc->lpMaxTime : $this->srvc->hpMaxTime );
 		$maxmem = $this->srvc->maxMemMap[$type] ?? $this->srvc->maxMemMap['*'];
 
 		// Make sure the runner is launched with various time/memory limits.
