@@ -188,15 +188,18 @@ class JobRunnerPipeline {
 
 		// Make sure the runner is launched with various time/memory limits.
 		// Nice the process so things like ssh and deployment scripts are fine.
-		$what = $with = [];
-		foreach ( compact( 'db', 'type', 'maxtime', 'maxmem' ) as $k => $v ) {
-			$what[] = "%($k)u";
-			$with[] = rawurlencode( $v );
-			$what[] = "%($k)x";
-			$with[] = escapeshellarg( $v );
+		$replacements = [];
+		foreach ( [
+			'db' => $db,
+			'type' => $type,
+			'maxtime' => $maxtime,
+			'maxmem' => $maxmem,
+		] as $name => $value ) {
+			$replacements["%($name)u"] = rawurlencode( $value );
+			$replacements["%($name)x"] = escapeshellarg( $value );
 		}
 		// The dispatcher might be runJobs.php, curl, or wget
-		$cmd = str_replace( $what, $with, $this->srvc->dispatcher );
+		$cmd = strtr( $this->srvc->dispatcher, $replacements );
 
 		$descriptors = [
 			// stdin (child)
