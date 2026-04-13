@@ -134,7 +134,7 @@ class RedisJobChronService extends RedisJobService {
 
 	/**
 	 * @param string $qServer Redis host
-	 * @param array &$aggrMap Map of (queue name => timestamp)
+	 * @param array<string,int> &$aggrMap Map of (queue name => timestamp)
 	 * @param int &$jobs
 	 * @param string $lockKey
 	 * @return bool
@@ -189,7 +189,7 @@ class RedisJobChronService extends RedisJobService {
 	/**
 	 * @param string $qServer Redis host
 	 * @param array $params A single value from PeriodicScriptParamsIterator
-	 * @param array &$aggrMap Map of (queue name => timestamp)
+	 * @param array<string,int> &$aggrMap Map of (queue name => timestamp)
 	 * @param bool &$scriptLoaded
 	 * @return int|bool Affected jobs or false on failure
 	 */

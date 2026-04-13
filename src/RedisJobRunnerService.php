@@ -122,7 +122,7 @@ class RedisJobRunnerService extends RedisJobService {
 	}
 
 	/**
-	 * @return array Cached map of (job type => domain => UNIX timestamp)
+	 * @return array<string,array<string,int>> Cached map of (job type => domain => UNIX timestamp)
 	 */
 	private function &getReadyQueueMap() {
 		// cache
@@ -154,7 +154,7 @@ class RedisJobRunnerService extends RedisJobService {
 	}
 
 	/**
-	 * @return array|false Map of (job type => domain => UNIX timestamp); false on error
+	 * @return array<string,array<string,int>>|false Map of (job type => domain => UNIX timestamp); false on error
 	 */
 	private function loadReadyQueueMap() {
 		$pendingByType = false;

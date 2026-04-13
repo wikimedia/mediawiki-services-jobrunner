@@ -4,7 +4,7 @@ declare( strict_types = 1 );
 class JobRunnerPipeline {
 	/** @var RedisJobService */
 	protected $srvc;
-	/** @var array (loop ID => slot ID => slot status array) */
+	/** @var array<int,array<int,array>> (loop ID => slot ID => slot status array) */
 	protected $procMap = [];
 
 	/**
@@ -15,7 +15,7 @@ class JobRunnerPipeline {
 	}
 
 	/**
-	 * @param string $loop
+	 * @param int $loop
 	 * @param int $slot
 	 */
 	public function initSlot( $loop, $slot ) {
@@ -34,16 +34,15 @@ class JobRunnerPipeline {
 
 	/**
 	 * @param int $loop
-	 * @param array $prioMap
-	 * @param array &$pending
-	 * @return array
+	 * @param array<int,array> $prioMap
+	 * @param array<string,array<string,int>> &$pending
+	 * @return int[]
 	 */
 	public function refillSlots( $loop, array $prioMap, array &$pending ) {
 		$free = 0;
 		$new = 0;
 		$host = gethostname();
 		$cTime = time();
-		// @phan-suppress-next-line PhanTypeMismatchDimFetch
 		foreach ( $this->procMap[$loop] as $slot => &$procSlot ) {
 			$status = $procSlot['handle'] ? proc_get_status( $procSlot['handle'] ) : null;
 			if ( $status ) {
@@ -134,9 +133,9 @@ class JobRunnerPipeline {
 
 	/**
 	 * @param int $loop
-	 * @param array $prioMap
-	 * @param array $pending
-	 * @return array|bool
+	 * @param array<int,array> $prioMap
+	 * @param array<string,array<string,int>> $pending
+	 * @return string[]|bool
 	 */
 	protected function selectQueue( $loop, array $prioMap, array $pending ) {
 		$include = $this->srvc->loopMap[$loop]['include'];
@@ -176,7 +175,7 @@ class JobRunnerPipeline {
 	 * @param int $loop
 	 * @param int $slot
 	 * @param bool $highPrio
-	 * @param array $queue
+	 * @param string[] $queue
 	 * @param array &$procSlot
 	 * @return bool
 	 */
