@@ -315,7 +315,7 @@ abstract class RedisJobService {
 		// we had some job runners oom'ing on this call, log what we are
 		// doing so there is relevant information next to the oom
 		$this->debug( "Redis cmd: $cmd " . json_encode( $args ) );
-		$res = call_user_func_array( [ $conn, $cmd ], $args );
+		$res = $conn->$cmd( ...$args );
 		$err = $conn->getLastError();
 		if ( $err !== null ) {
 			// Make all errors be exceptions instead of "most but not all".
